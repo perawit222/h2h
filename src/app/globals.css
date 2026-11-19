@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+:root {
+  --background: #060911;
+  --foreground: #e6edf7;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background-color: #060911;
+  color: #e6edf7;
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  background-image:
+    radial-gradient(circle at 15% 0%, rgba(16, 185, 129, 0.08), transparent 36%),
+    radial-gradient(circle at 85% 0%, rgba(59, 130, 246, 0.09), transparent 38%);
+  min-height: 100vh;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subtle dark scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0f1c;
+}
+::-webkit-scrollbar-thumb {
+  background: #1f2a40;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334566;
+}
