@@ -100,6 +100,46 @@ export interface TeamSnapshot {
   hasStandIn?: boolean;
 }
 
+export interface MatchQuickScore {
+  interestScore: number; // 1 (Risky) to 10 (Best to Invest)
+  investabilityLabel: string;
+  riskLevel: RiskLevel;
+  estimatedEdgePct: number;
+  maxSafeStakeUsd: number;
+  bestAngleSummary: string;
+}
+
+export interface ParlayLeg {
+  matchId: string;
+  match: EsportsMatch;
+  game: GameTitle;
+  matchName: string;
+  tournament: string;
+  startTimeIso: string;
+  marketCategory: string;
+  selection: string;
+  oddsDecimal: number;
+  modelWinProbPct: number;
+  edgePct: number;
+  rationale: string;
+}
+
+export interface DailyParlayTier {
+  id: 'safe' | 'medium' | 'value_risk';
+  title: string;
+  badge: string;
+  targetOddsRange: string;
+  description: string;
+  legs: ParlayLeg[];
+  combinedOdds: number;
+  combinedWinProbPct: number;
+  expectedValuePct: number;
+  investabilityScore: number; // 1-10
+  riskLevel: RiskLevel;
+  recommendedUnits: string;
+  maxSafeStakeUsd: number;
+}
+
 export interface EsportsMatch {
   id: string;
   game: GameTitle;
@@ -115,6 +155,7 @@ export interface EsportsMatch {
   volume24h?: number;
   liquidity?: number;
   markets?: SubMarketSnapshot[];
+  quickScore?: MatchQuickScore;
   teamA: TeamSnapshot;
   teamB: TeamSnapshot;
   h2h: {
@@ -135,6 +176,7 @@ export interface ScheduleResponse {
   fetchedAt: string;
   sourcesUsed: string[];
   matches: EsportsMatch[];
+  parlays: DailyParlayTier[];
 }
 
 export interface PillarDetail {

@@ -4,6 +4,7 @@ import React, { useCallback, useState } from 'react';
 import {
   Activity,
   CalendarClock,
+  Layers,
   RefreshCw,
   ShieldAlert,
   Terminal,
@@ -11,6 +12,7 @@ import {
 import { EsportsMatch, RadarResponse, ScheduleResponse } from '@/types/esports';
 import { AnomalyRadar } from './AnomalyRadar';
 import { ScheduleHub } from './ScheduleHub';
+import { DailyStepsHub } from './DailyStepsHub';
 import { BettingDrawer } from './BettingDrawer';
 
 interface TerminalShellProps {
@@ -19,7 +21,7 @@ interface TerminalShellProps {
 }
 
 export function TerminalShell({ initialRadar, initialSchedule }: TerminalShellProps) {
-  const [activeTab, setActiveTab] = useState<'radar' | 'schedule'>('radar');
+  const [activeTab, setActiveTab] = useState<'radar' | 'schedule' | 'steps'>('radar');
   const [radarData, setRadarData] = useState<RadarResponse>(initialRadar);
   const [scheduleData, setScheduleData] = useState<ScheduleResponse>(initialSchedule);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -95,9 +97,24 @@ export function TerminalShell({ initialRadar, initialSchedule }: TerminalShellPr
               }`}
             >
               <CalendarClock className="h-3.5 w-3.5" />
-              <span>Schedule &amp; Analyzer</span>
+              <span>Schedule</span>
               <span className="ml-0.5 rounded-full bg-slate-800 px-1.5 py-0.2 text-[10px] font-mono text-slate-300">
                 {scheduleData.matches.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('steps')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                activeTab === 'steps'
+                  ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <Layers className="h-3.5 w-3.5" />
+              <span>Daily Steps</span>
+              <span className="ml-0.5 rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-mono text-amber-300">
+                3
               </span>
             </button>
           </nav>
@@ -118,10 +135,15 @@ export function TerminalShell({ initialRadar, initialSchedule }: TerminalShellPr
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
         {activeTab === 'radar' ? (
           <AnomalyRadar data={radarData} isLoading={isRefreshing} />
-        ) : (
+        ) : activeTab === 'schedule' ? (
           <ScheduleHub
             data={scheduleData}
             isLoading={isRefreshing}
+            onSelectMatch={(match) => setSelectedMatch(match)}
+          />
+        ) : (
+          <DailyStepsHub
+            parlays={scheduleData.parlays || []}
             onSelectMatch={(match) => setSelectedMatch(match)}
           />
         )}

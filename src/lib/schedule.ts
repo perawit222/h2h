@@ -7,6 +7,8 @@ import {
   TeamSnapshot,
 } from '@/types/esports';
 import { fetchPolymarketEsportsRadar } from './polymarket';
+import { runDeterministicAnalysis } from './analyzer';
+import { buildDailyParlays } from './parlay';
 
 interface Bo3MatchRaw {
   id: number;
@@ -488,9 +490,22 @@ export async function fetchDailySchedule(): Promise<ScheduleResponse> {
     }
   }
 
-  const combined = Array.from(matchMap.values());
+  const combined = Array.from(matchMap.values()).map((match) => {
+    const analysis = runDeterministicAnalysis(match);
+    return {
+      ...match,
+      quickScore: {
+        interestScore: analysis.interestScore,
+        investabilityLabel: analysis.investabilityLabel,
+        riskLevel: analysis.riskLevel,
+        estimatedEdgePct: analysis.estimatedEdgePct,
+        maxSafeStakeUsd: analysis.maxSafeStakeUsd,
+        bestAngleSummary: `${analysis.recommendedMarket.category}: ${analysis.recommendedMarket.selection} @ ${analysis.recommendedMarket.oddsDecimal.toFixed(2)}x`,
+      },
+    };
+  });
 
-  // Sort: LIVE first, then highest 24h Polymarket volume / soonest upcoming time
+  // Sort: LIVE first, then soonest upcoming time
   combined.sort((a, b) => {
     if (a.status !== b.status) return a.status === 'live' ? -1 : 1;
     const tA = new Date(a.startTimeIso).getTime();
@@ -498,9 +513,12 @@ export async function fetchDailySchedule(): Promise<ScheduleResponse> {
     return tA - tB;
   });
 
+  const parlays = buildDailyParlays(combined);
+
   return {
     fetchedAt,
     sourcesUsed,
     matches: combined,
+    parlays,
   };
 }

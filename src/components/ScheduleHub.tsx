@@ -51,6 +51,7 @@ export function ScheduleHub({ data, isLoading, onSelectMatch }: ScheduleHubProps
   const [selectedGame, setSelectedGame] = useState<'All' | GameTitle>('All');
   const [selectedFormat, setSelectedFormat] = useState<'All' | MatchFormat>('All');
   const [statusFilter, setStatusFilter] = useState<'all' | 'live' | 'upcoming'>('all');
+  const [sortBy, setSortBy] = useState<'score' | 'time'>('score');
 
   const localTz = useMemo(() => {
     try {
@@ -61,13 +62,23 @@ export function ScheduleHub({ data, isLoading, onSelectMatch }: ScheduleHubProps
   }, []);
 
   const filteredMatches = useMemo(() => {
-    return data.matches.filter((m) => {
+    const list = data.matches.filter((m) => {
       if (selectedGame !== 'All' && m.game !== selectedGame) return false;
       if (selectedFormat !== 'All' && m.format !== selectedFormat) return false;
       if (statusFilter !== 'all' && m.status !== statusFilter) return false;
       return true;
     });
-  }, [data.matches, selectedGame, selectedFormat, statusFilter]);
+
+    return [...list].sort((a, b) => {
+      if (sortBy === 'score') {
+        const sA = a.quickScore?.interestScore ?? 5;
+        const sB = b.quickScore?.interestScore ?? 5;
+        if (sB !== sA) return sB - sA;
+      }
+      if (a.status !== b.status) return a.status === 'live' ? -1 : 1;
+      return new Date(a.startTimeIso).getTime() - new Date(b.startTimeIso).getTime();
+    });
+  }, [data.matches, selectedGame, selectedFormat, statusFilter, sortBy]);
 
   return (
     <div className="space-y-5">
@@ -148,6 +159,15 @@ export function ScheduleHub({ data, isLoading, onSelectMatch }: ScheduleHubProps
               </option>
             ))}
           </select>
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as 'score' | 'time')}
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-sky-500/50"
+          >
+            <option value="score">Sort: Best 1–10 Score</option>
+            <option value="time">Sort: Start Time</option>
+          </select>
         </div>
       </div>
 
@@ -173,11 +193,19 @@ export function ScheduleHub({ data, isLoading, onSelectMatch }: ScheduleHubProps
   );
 }
 
+function getQuickScoreStyle(score: number): string {
+  if (score >= 8) return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40';
+  if (score >= 6) return 'bg-sky-500/15 text-sky-300 border-sky-500/40';
+  if (score >= 4) return 'bg-amber-500/15 text-amber-300 border-amber-500/40';
+  return 'bg-rose-500/15 text-rose-300 border-rose-500/40';
+}
+
 function MatchCard({ match, onClick }: { match: EsportsMatch; onClick: () => void }) {
   const isLive = match.status === 'live';
   const markets = match.markets || [];
   const hcpMarket = markets.find((m) => /handicap/i.test(m.question));
   const ouMarket = markets.find((m) => /o\/u|over\/under|total/i.test(m.question));
+  const qs = match.quickScore;
 
   return (
     <button
@@ -201,6 +229,16 @@ function MatchCard({ match, onClick }: { match: EsportsMatch; onClick: () => voi
         </div>
 
         <div className="flex items-center gap-2">
+          {qs && (
+            <span
+              className={`px-2 py-0.5 rounded-full text-[11px] font-mono font-bold border ${getQuickScoreStyle(
+                qs.interestScore
+              )}`}
+              title="1 = Extremely Risky / Avoid · 10 = High Conviction / Best to Invest"
+            >
+              {qs.interestScore}/10 · {qs.riskLevel} Risk
+            </span>
+          )}
           {isLive ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/15 border border-rose-500/30 px-2 py-0.5 text-[11px] font-semibold text-rose-300">
               <span className="h-1.5 w-1.5 rounded-full bg-rose-400 animate-pulse" />
