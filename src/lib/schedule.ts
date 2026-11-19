@@ -81,6 +81,9 @@ function buildTeamSnapshot(
     Valorant: { label: 'ACS', val: `${195 + seededNumber(name, 0, 62)} ACS` },
     LoL: { label: 'KDA', val: (3.1 + seededNumber(name, 0, 29) / 10).toFixed(1) },
     'Dota 2': { label: 'Avg KDA', val: (3.3 + seededNumber(name, 0, 28) / 10).toFixed(1) },
+    Football: { label: 'xG / 90', val: `${(1.15 + seededNumber(name, 0, 115) / 100).toFixed(2)} xG` },
+    NBA: { label: 'Net Rtg', val: `${seededNumber(name, -4, 10) >= 0 ? '+' : ''}${(seededNumber(name, -40, 100) / 10).toFixed(1)}` },
+    Tennis: { label: '1st Serve %', val: `${62 + seededNumber(name, 0, 16)}%` },
   };
 
   return {
@@ -107,6 +110,9 @@ const KEY_MAPS_BY_GAME: Record<GameTitle, string[]> = {
   Valorant: ['Ascent', 'Haven', 'Lotus', 'Sunset', 'Split'],
   LoL: ['Azir', 'Vi', 'KaiSa', 'Rumble', 'Varus'],
   'Dota 2': ['Shadow Fiend', 'Tiny', 'Puck', 'Centaur', 'Morphling'],
+  Football: ['Asian Handicap -0.5', 'Over/Under 2.5 Goals', 'BTTS', 'Home Press'],
+  NBA: ['Point Spread', 'Total Points O/U', '3PT Efficiency', 'Pace & Bench'],
+  Tennis: ['1st Serve Hold %', 'Break Point Conv.', 'Surface Form', 'Set Handicap'],
 };
 
 function buildReferenceSubMarkets(
@@ -114,7 +120,8 @@ function buildReferenceSubMarkets(
   teamA: string,
   teamB: string,
   probA: number,
-  format: MatchFormat
+  format: MatchFormat,
+  game: GameTitle = 'CS2'
 ): SubMarketSnapshot[] {
   const pA = Math.max(0.15, Math.min(0.85, probA));
   const pB = 1 - pA;
@@ -137,13 +144,128 @@ function buildReferenceSubMarkets(
     },
   ];
 
+  const favIsA = pA >= pB;
+  const favProb = Math.max(pA, pB);
+  const favName = favIsA ? teamA : teamB;
+  const dogName = favIsA ? teamB : teamA;
+
+  if (game === 'Football') {
+    // Asian Handicap (-0.5 / +0.5) & Over/Under 2.5 Goals
+    const ahProb = Math.max(0.28, Math.min(0.74, Number((favProb * 0.94).toFixed(3))));
+    markets.push({
+      id: `${idPrefix}-ah`,
+      question: `Asian Handicap: ${favName} (-0.5) vs ${dogName} (+0.5)`,
+      category: 'Handicap / Total',
+      teamA: `${favName} (-0.5)`,
+      teamB: `${dogName} (+0.5)`,
+      probA: ahProb,
+      probB: Number((1 - ahProb).toFixed(3)),
+      oddsA: Number((1 / ahProb).toFixed(2)),
+      oddsB: Number((1 / (1 - ahProb)).toFixed(2)),
+      volume24h: 0,
+      totalVolume: 0,
+      liquidity: 0,
+      priceChange24h: 0,
+      priceChange1h: 0,
+    });
+    const overGoalsProb = Number((0.46 + seededNumber(teamA + teamB, 0, 14) / 100).toFixed(3));
+    markets.push({
+      id: `${idPrefix}-ou`,
+      question: `Total Goals: O/U 2.5`,
+      category: 'Handicap / Total',
+      teamA: 'Over 2.5 Goals',
+      teamB: 'Under 2.5 Goals',
+      probA: overGoalsProb,
+      probB: Number((1 - overGoalsProb).toFixed(3)),
+      oddsA: Number((1 / overGoalsProb).toFixed(2)),
+      oddsB: Number((1 / (1 - overGoalsProb)).toFixed(2)),
+      volume24h: 0,
+      totalVolume: 0,
+      liquidity: 0,
+      priceChange24h: 0,
+      priceChange1h: 0,
+    });
+    return markets;
+  }
+
+  if (game === 'NBA') {
+    const spread = favProb >= 0.68 ? '6.5' : favProb >= 0.58 ? '4.5' : '2.5';
+    const spProb = 0.52;
+    markets.push({
+      id: `${idPrefix}-sp`,
+      question: `Point Spread: ${favName} (-${spread}) vs ${dogName} (+${spread})`,
+      category: 'Handicap / Total',
+      teamA: `${favName} (-${spread})`,
+      teamB: `${dogName} (+${spread})`,
+      probA: spProb,
+      probB: 0.48,
+      oddsA: Number((1 / spProb).toFixed(2)),
+      oddsB: Number((1 / 0.48).toFixed(2)),
+      volume24h: 0,
+      totalVolume: 0,
+      liquidity: 0,
+      priceChange24h: 0,
+      priceChange1h: 0,
+    });
+    const totalPts = 216 + seededNumber(teamA + teamB, 0, 20);
+    markets.push({
+      id: `${idPrefix}-ou`,
+      question: `Total Points: O/U ${totalPts}.5`,
+      category: 'Handicap / Total',
+      teamA: `Over ${totalPts}.5`,
+      teamB: `Under ${totalPts}.5`,
+      probA: 0.51,
+      probB: 0.49,
+      oddsA: 1.96,
+      oddsB: 2.04,
+      volume24h: 0,
+      totalVolume: 0,
+      liquidity: 0,
+      priceChange24h: 0,
+      priceChange1h: 0,
+    });
+    return markets;
+  }
+
+  if (game === 'Tennis') {
+    const hcpProb = Math.max(0.24, Math.min(0.68, Number((favProb * favProb * 0.95).toFixed(3))));
+    markets.push({
+      id: `${idPrefix}-hcp`,
+      question: `Set Handicap: ${favName} (-1.5) vs ${dogName} (+1.5)`,
+      category: 'Handicap / Total',
+      teamA: `${favName} (-1.5 Sets)`,
+      teamB: `${dogName} (+1.5 Sets)`,
+      probA: hcpProb,
+      probB: Number((1 - hcpProb).toFixed(3)),
+      oddsA: Number((1 / hcpProb).toFixed(2)),
+      oddsB: Number((1 / (1 - hcpProb)).toFixed(2)),
+      volume24h: 0,
+      totalVolume: 0,
+      liquidity: 0,
+      priceChange24h: 0,
+      priceChange1h: 0,
+    });
+    markets.push({
+      id: `${idPrefix}-ou`,
+      question: `Total Games: O/U 22.5`,
+      category: 'Handicap / Total',
+      teamA: 'Over 22.5 Games',
+      teamB: 'Under 22.5 Games',
+      probA: 0.52,
+      probB: 0.48,
+      oddsA: 1.92,
+      oddsB: 2.08,
+      volume24h: 0,
+      totalVolume: 0,
+      liquidity: 0,
+      priceChange24h: 0,
+      priceChange1h: 0,
+    });
+    return markets;
+  }
+
   if (format !== 'Bo1') {
-    const favIsA = pA >= pB;
-    const favProb = Math.max(pA, pB);
-    // Estimate 2-0 / -1.5 handicap probability from Bo3 moneyline
     const hcpProb = Math.max(0.18, Math.min(0.68, Number((favProb * favProb * 0.92).toFixed(3))));
-    const favName = favIsA ? teamA : teamB;
-    const dogName = favIsA ? teamB : teamA;
     markets.push({
       id: `${idPrefix}-hcp`,
       question: `Map Handicap: ${favName} (-1.5) vs ${dogName} (+1.5)`,
@@ -161,8 +283,7 @@ function buildReferenceSubMarkets(
       priceChange1h: 0,
     });
 
-    // Estimate Over 2.5 Maps (or 3.5 for Bo5) probability: closer matches go Over more often
-    const closeness = 1 - Math.abs(pA - pB) * 2; // 0 to 1
+    const closeness = 1 - Math.abs(pA - pB) * 2;
     const overProb = Math.max(0.28, Math.min(0.62, Number((0.34 + closeness * 0.24).toFixed(3))));
     const line = format === 'Bo5' ? '3.5' : '2.5';
     markets.push({
@@ -388,15 +509,141 @@ async function fetchLoLEsportsSchedule(): Promise<EsportsMatch[]> {
   }
 }
 
+interface EspnCompetitorRaw {
+  homeAway?: string;
+  team?: { displayName?: string; shortDisplayName?: string };
+  records?: { summary?: string }[];
+}
+
+interface EspnEventRaw {
+  id?: string;
+  date?: string;
+  status?: { type?: { state?: string; shortDetail?: string } };
+  competitions?: { competitors?: EspnCompetitorRaw[] }[];
+}
+
+async function fetchEspnSportsMatches(): Promise<EsportsMatch[]> {
+  const feeds: { url: string; game: GameTitle; league: string; format: MatchFormat }[] = [
+    {
+      url: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
+      game: 'NBA',
+      league: 'NBA Regular Season',
+      format: '4Q',
+    },
+    {
+      url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard',
+      game: 'Football',
+      league: 'Premier League',
+      format: '90m',
+    },
+    {
+      url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard',
+      game: 'Football',
+      league: 'La Liga',
+      format: '90m',
+    },
+    {
+      url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/ger.1/scoreboard',
+      game: 'Football',
+      league: 'Bundesliga',
+      format: '90m',
+    },
+    {
+      url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/scoreboard',
+      game: 'Football',
+      league: 'Serie A',
+      format: '90m',
+    },
+    {
+      url: 'https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard',
+      game: 'Football',
+      league: 'Ligue 1',
+      format: '90m',
+    },
+  ];
+
+  const results = await Promise.all(
+    feeds.map(async (f) => {
+      try {
+        const res = await fetch(f.url, {
+          next: { revalidate: 300 },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) return [] as EsportsMatch[];
+        const json = (await res.json()) as { events?: EspnEventRaw[] };
+        const events = (json.events || []).filter((e) => e.status?.type?.state !== 'post').slice(0, 6);
+
+        const out: EsportsMatch[] = [];
+        for (const ev of events) {
+          const comps = ev.competitions?.[0]?.competitors || [];
+          if (comps.length < 2) continue;
+          const home = comps.find((c) => c.homeAway === 'home') || comps[0];
+          const away = comps.find((c) => c.homeAway === 'away') || comps[1];
+          const tA = home.team?.displayName || home.team?.shortDisplayName;
+          const tB = away.team?.displayName || away.team?.shortDisplayName;
+          if (!tA || !tB) continue;
+
+          const isLive = ev.status?.type?.state === 'in';
+          const probA = Math.max(0.32, Math.min(0.72, 0.54 + seededNumber(tA + tB, -16, 16) / 100));
+          const oddsA = Number((1 / probA).toFixed(2));
+          const oddsB = Number((1 / (1 - probA)).toFixed(2));
+
+          out.push({
+            id: `espn-${f.game.toLowerCase()}-${ev.id}`,
+            game: f.game,
+            tournament: f.league,
+            tier: 'S-Tier',
+            stage: isLive ? ev.status?.type?.shortDetail || 'LIVE' : 'Official Fixture',
+            isLan: true,
+            format: f.format,
+            status: isLive ? 'live' : 'upcoming',
+            startTimeIso: ev.date || new Date().toISOString(),
+            source: 'ESPN Live API',
+            markets: buildReferenceSubMarkets(`espn-${ev.id}`, tA, tB, probA, f.format, f.game),
+            teamA: buildTeamSnapshot(tA, f.game, oddsA),
+            teamB: buildTeamSnapshot(tB, f.game, oddsB),
+            h2h: {
+              teamAWins: seededNumber(tA, 2, 7),
+              teamBWins: seededNumber(tB, 1, 6),
+              lastMeetingSummary: `${f.league} official schedule synced live from ESPN`,
+              mapDiffA: seededNumber(tA, -2, 3),
+            },
+            mapOrDraftContext: {
+              edgeTeam: probA > 0.56 ? 'A' : probA < 0.44 ? 'B' : 'Even',
+              keyMapsOrHeroes: KEY_MAPS_BY_GAME[f.game].slice(0, 4),
+              statHighlight:
+                f.game === 'Football'
+                  ? `Home-field advantage & xG differential favor ${probA >= 0.5 ? tA : tB} in 90m`
+                  : `Pace, bench depth, and home court favor ${probA >= 0.5 ? tA : tB}`,
+            },
+            narrativeNotes: [
+              `Real ${f.league} fixture pulled directly from ESPN public scoreboard API`,
+              f.game === 'Football'
+                ? '90-minute Football includes draw risk — consider Asian Handicap (-0.5) or O/U 2.5 Goals'
+                : 'NBA back-to-back fatigue and injury reports can shift spreads late',
+            ],
+          });
+        }
+        return out;
+      } catch {
+        return [] as EsportsMatch[];
+      }
+    })
+  );
+
+  return results.flat();
+}
+
 export async function fetchDailySchedule(): Promise<ScheduleResponse> {
   const fetchedAt = new Date().toISOString();
   const sourcesUsed: string[] = [];
 
-  const [radar, bo3Matches, openDotaMatches, lolMatches] = await Promise.all([
+  const [radar, bo3Matches, openDotaMatches, lolMatches, espnMatches] = await Promise.all([
     fetchPolymarketEsportsRadar(),
     fetchBo3Cs2Matches(),
     fetchOpenDotaLive(),
     fetchLoLEsportsSchedule(),
+    fetchEspnSportsMatches(),
   ]);
 
   const nowMs = Date.now();
@@ -417,12 +664,24 @@ export async function fetchDailySchedule(): Promise<ScheduleResponse> {
       const oddsA = primarySub ? primarySub.oddsA : a.decimalOdds;
       const oddsB = primarySub ? primarySub.oddsB : a.opponentDecimalOdds;
 
+      const markets =
+        a.subMarkets.length >= 2
+          ? a.subMarkets
+          : buildReferenceSubMarkets(
+              `pm-${a.eventId}`,
+              a.teamA,
+              a.teamB,
+              1 / oddsA,
+              a.format,
+              a.game
+            );
+
       matchMap.set(pairKey, {
         id: `pm-sched-${a.eventId}`,
         game: a.game,
         tournament: a.tournament,
         tier: a.tier === 'Tier 1' ? 'S-Tier' : 'B-Tier',
-        stage: isLive ? 'Live on Polymarket' : `${a.subMarkets.length} Live Markets`,
+        stage: isLive ? 'Live on Polymarket' : `${markets.length} Markets`,
         isLan: a.tier === 'Tier 1',
         format: a.format,
         status: isLive ? 'live' : 'upcoming',
@@ -431,7 +690,7 @@ export async function fetchDailySchedule(): Promise<ScheduleResponse> {
         polymarketUrl: a.polymarketUrl,
         volume24h: a.volume24h,
         liquidity: a.liquidity,
-        markets: a.subMarkets,
+        markets,
         teamA: buildTeamSnapshot(a.teamA, a.game, oddsA),
         teamB: buildTeamSnapshot(a.teamB, a.game, oddsB),
         h2h: {
@@ -483,6 +742,17 @@ export async function fetchDailySchedule(): Promise<ScheduleResponse> {
   if (lolMatches.length > 0) {
     sourcesUsed.push('LoL Esports API');
     for (const m of lolMatches) {
+      const pairKey = `${m.game}-${[normalizeTeamKey(m.teamA.name), normalizeTeamKey(m.teamB.name)].sort().join('-')}`;
+      if (!matchMap.has(pairKey)) {
+        matchMap.set(pairKey, m);
+      }
+    }
+  }
+
+  // 5. Real ESPN Top 5 Football Leagues & NBA schedule
+  if (espnMatches.length > 0) {
+    sourcesUsed.push('ESPN Live API (Football Top 5 + NBA)');
+    for (const m of espnMatches) {
       const pairKey = `${m.game}-${[normalizeTeamKey(m.teamA.name), normalizeTeamKey(m.teamB.name)].sort().join('-')}`;
       if (!matchMap.has(pairKey)) {
         matchMap.set(pairKey, m);

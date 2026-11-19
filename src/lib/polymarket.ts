@@ -78,10 +78,43 @@ const GAME_MATCHERS: { game: GameTitle; patterns: RegExp[] }[] = [
     game: 'Dota 2',
     patterns: [/\bdota\s*2?\b/i, /\bdreamleague\b/i, /\bblast\s+slam\b/i, /\bwallachia\b/i],
   },
+  {
+    game: 'NBA',
+    patterns: [
+      /\bnba\b/i,
+      /\b(lakers|celtics|warriors|knicks|bucks|nuggets|suns|mavericks|thunder|cavaliers|timberwolves|clippers|heat|76ers|sixers|pacers|magic|hawks|bulls|nets|pistons|pelicans|wizards|raptors|rockets|spurs|grizzlies|kings|blazers|jazz|hornets)\b/i,
+    ],
+  },
+  {
+    game: 'Tennis',
+    patterns: [
+      /\btennis\b/i,
+      /\batp\b/i,
+      /\bwta\b/i,
+      /\bgrand\s+slam\b/i,
+      /\bwimbledon\b/i,
+      /\broland\s+garros\b/i,
+      /\bus\s+open\b/i,
+      /\baustralian\s+open\b/i,
+    ],
+  },
+  {
+    game: 'Football',
+    patterns: [
+      /premier\s+league/i,
+      /la\s+liga/i,
+      /bundesliga/i,
+      /serie\s+a/i,
+      /ligue\s+1/i,
+      /\bsoccer\b/i,
+      /\bfootball\b/i,
+      /\b(fc|cf|ac|sc|united|arsenal|chelsea|liverpool|barcelona|real\s+madrid|bayern|psg|juventus|inter|milan)\b/i,
+    ],
+  },
 ];
 
 const TIER1_REGEX =
-  /(pgl\s+major|iem\s+(katowice|cologne|dallas|rio|chengdu)|blast\s+(premier|world|slam)|esl\s+pro\s+league|vct\s+(americas|emea|pacific|cn|masters|champions)|lck\b|lpl\b|lec\b|the\s+international|dreamleague|esl\s+one)/i;
+  /(pgl\s+major|iem\s+(katowice|cologne|dallas|rio|chengdu)|blast\s+(premier|world|slam)|esl\s+pro\s+league|vct\s+(americas|emea|pacific|cn|masters|champions)|lck\b|lpl\b|lec\b|the\s+international|dreamleague|esl\s+one|premier\s+league|la\s+liga|bundesliga|serie\s+a|ligue\s+1|\bnba\b|\batp\b|\bwta\b)/i;
 
 function detectGame(text: string, tags?: { label?: string; slug?: string }[]): GameTitle | null {
   const tagText = (tags || []).map((t) => `${t.label || ''} ${t.slug || ''}`).join(' ');
@@ -118,31 +151,60 @@ function classifyMarket(question: string): MarketCategory {
   return 'Other';
 }
 
-function parseEventMeta(title: string): {
+function parseEventMeta(
+  title: string,
+  game: GameTitle,
+  tags?: { label?: string; slug?: string }[]
+): {
   cleanMatch: string;
   tournament: string;
   format: MatchFormat;
   teamA?: string;
   teamB?: string;
 } {
-  // Typical Polymarket format: "Counter-Strike: WBT vs MOUZ NXT (BO3) - European Pro League Playoffs"
-  const stripped = title.replace(/^(Counter-Strike|CS2|Valorant|Dota 2|LoL|League of Legends):\s*/i, '').trim();
-  const format: MatchFormat = /\(BO5\)/i.test(stripped)
-    ? 'Bo5'
-    : /\(BO1\)/i.test(stripped)
-      ? 'Bo1'
-      : 'Bo3';
+  const stripped = title
+    .replace(/^(Counter-Strike|CS2|Valorant|Dota 2|LoL|League of Legends|NBA|ATP|WTA):\s*/i, '')
+    .trim();
 
-  const parts = stripped.split(/\s+-\s+/);
-  const left = parts[0].replace(/\(BO[135]\)/gi, '').trim();
-  const tournament = parts.slice(1).join(' - ').trim() || 'Esports Pro Match';
+  let format: MatchFormat = 'Bo3';
+  if (game === 'Football') format = '90m';
+  else if (game === 'NBA') format = '4Q';
+  else if (game === 'Tennis') format = 'Sets';
+  else if (/\(BO5\)/i.test(stripped)) format = 'Bo5';
+  else if (/\(BO1\)/i.test(stripped)) format = 'Bo1';
 
-  const vsSplit = left.split(/\s+vs\.?\s+/i);
+  // Handle "ATP World Tour Finals, Group: Player A vs Player B"
+  let matchPart = stripped;
+  let tournament = '';
+  if (stripped.includes(':') && !stripped.includes(' - ')) {
+    const idx = stripped.indexOf(':');
+    tournament = stripped.slice(0, idx).trim();
+    matchPart = stripped.slice(idx + 1).trim();
+  } else {
+    const parts = stripped.split(/\s+-\s+/);
+    matchPart = parts[0].replace(/\(BO[135]\)/gi, '').trim();
+    tournament = parts.slice(1).join(' - ').trim();
+  }
+
+  if (!tournament) {
+    const tagStr = (tags || []).map((t) => t.label || '').join(' ');
+    if (/premier league/i.test(tagStr)) tournament = 'Premier League';
+    else if (/la liga/i.test(tagStr)) tournament = 'La Liga';
+    else if (/bundesliga/i.test(tagStr)) tournament = 'Bundesliga';
+    else if (/serie a/i.test(tagStr)) tournament = 'Serie A';
+    else if (/ligue 1/i.test(tagStr)) tournament = 'Ligue 1';
+    else if (game === 'NBA') tournament = 'NBA Regular Season';
+    else if (game === 'Tennis') tournament = 'ATP / WTA Tour';
+    else if (game === 'Football') tournament = 'Top 5 European Football';
+    else tournament = `${game} Pro Match`;
+  }
+
+  const vsSplit = matchPart.split(/\s+vs\.?\s+/i);
   const teamA = vsSplit[0]?.trim();
   const teamB = vsSplit[1]?.trim();
 
   return {
-    cleanMatch: teamA && teamB ? `${teamA} vs ${teamB}` : left,
+    cleanMatch: teamA && teamB ? `${teamA} vs ${teamB}` : matchPart,
     tournament,
     format,
     teamA,
@@ -335,11 +397,16 @@ export async function fetchPolymarketEsportsRadar(): Promise<RadarResponse> {
   const minDate = new Date(Date.now() - 18 * 3600 * 1000).toISOString().slice(0, 10);
 
   const endpoints = [
-    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=esports&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=30`,
-    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=counter-strike-2&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=20`,
-    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=dota-2&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=20`,
-    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=valorant&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=20`,
-    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=league-of-legends&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=20`,
+    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=esports&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=25`,
+    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=counter-strike-2&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=15`,
+    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=dota-2&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=15`,
+    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=valorant&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=15`,
+    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=nba&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=12`,
+    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=tennis&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=12`,
+    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=premier-league&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=10`,
+    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=la-liga&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=8`,
+    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=bundesliga&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=8`,
+    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=ligue-1&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=8`,
   ];
 
   const results = await Promise.all(endpoints.map(fetchGammaEvents));
@@ -358,24 +425,62 @@ export async function fetchPolymarketEsportsRadar(): Promise<RadarResponse> {
 
   for (const ev of allEvents) {
     const evTitle = ev.title || '';
-    // Keep strictly real head-to-head esports match events ("vs" or "vs.")
+    // Keep strictly real head-to-head match events ("vs" or "vs.") and skip Exact Score / More Markets clutter
     if (!/\bvs\.?\b/i.test(evTitle)) continue;
+    if (/(exact score|more markets)/i.test(evTitle)) continue;
 
     const game = detectGame(`${evTitle} ${ev.description || ''}`, ev.tags);
     if (!game) continue;
 
-    const meta = parseEventMeta(evTitle);
+    const meta = parseEventMeta(evTitle, game, ev.tags);
     const rawMarkets = (ev.markets || []).filter((m) => !m.closed);
     if (rawMarkets.length === 0) continue;
 
     const subMarkets: SubMarketSnapshot[] = [];
     let bestStartTime = normalizeIso(ev.startTime);
 
+    // Special handling for 3-way Football markets ("Will Arsenal win?" Yes/No + "Will Newcastle win?" Yes/No)
+    const yesNoWinMarkets = rawMarkets.filter((m) => {
+      const outs = parseJsonArray(m.outcomes);
+      return outs.length === 2 && outs[0] === 'Yes' && outs[1] === 'No' && /will .+ win/i.test(m.question || '');
+    });
+
+    if (game === 'Football' && yesNoWinMarkets.length >= 2 && meta.teamA && meta.teamB) {
+      const mA = yesNoWinMarkets.find((m) =>
+        (m.question || '').toLowerCase().includes(meta.teamA!.toLowerCase().split(' ')[0])
+      ) || yesNoWinMarkets[0];
+      const mB = yesNoWinMarkets.find((m) => m.id !== mA.id) || yesNoWinMarkets[1];
+      const pA = Math.max(0.05, Math.min(0.95, Number(parseJsonArray(mA.outcomePrices)[0]) || 0.45));
+      const pB = Math.max(0.05, Math.min(0.95, Number(parseJsonArray(mB.outcomePrices)[0]) || 0.35));
+      if (!bestStartTime && mA.gameStartTime) bestStartTime = normalizeIso(mA.gameStartTime);
+
+      subMarkets.push({
+        id: String(mA.id || ev.id),
+        question: `Match Winner (90m): ${meta.teamA} vs ${meta.teamB}`,
+        category: 'Match Winner',
+        teamA: meta.teamA,
+        teamB: meta.teamB,
+        probA: pA,
+        probB: pB,
+        oddsA: Number((1 / pA).toFixed(2)),
+        oddsB: Number((1 / pB).toFixed(2)),
+        volume24h: (Number(mA.volume24hr ?? 0) || 0) + (Number(mB.volume24hr ?? 0) || 0),
+        totalVolume: (Number(mA.volumeNum ?? 0) || 0) + (Number(mB.volumeNum ?? 0) || 0),
+        liquidity: (Number(mA.liquidityNum ?? 0) || 0) + (Number(mB.liquidityNum ?? 0) || 0),
+        priceChange24h: Number(mA.oneDayPriceChange ?? 0) || 0,
+        priceChange1h: Number(mA.oneHourPriceChange ?? 0) || 0,
+      });
+    }
+
     for (const m of rawMarkets) {
       totalMarketsScanned++;
       const outcomes = parseJsonArray(m.outcomes);
       const prices = parseJsonArray(m.outcomePrices).map(Number);
       if (outcomes.length < 2 || !Number.isFinite(prices[0]) || !Number.isFinite(prices[1])) {
+        continue;
+      }
+      // Skip raw Yes/No sub-markets if we already synthesized the clean Football H2H market
+      if (game === 'Football' && outcomes[0] === 'Yes' && outcomes[1] === 'No' && subMarkets.length > 0) {
         continue;
       }
 
@@ -505,7 +610,7 @@ export async function fetchPolymarketEsportsRadar(): Promise<RadarResponse> {
       totalMarketsScanned,
       totalEventsScanned: alerts.length,
       flaggedCount: alerts.filter((a) => a.suspicionScore >= 48).length,
-      alerts: alerts.slice(0, 40),
+      alerts: alerts.slice(0, 80),
     };
   }
 

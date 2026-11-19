@@ -66,7 +66,7 @@ export function TerminalShell({ initialRadar, initialSchedule }: TerminalShellPr
               </div>
               <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
                 <Activity className="h-3 w-3 text-emerald-400" />
-                <span>POLYMARKET GAMMA + OPENDOTA + 4-PILLAR QUANT</span>
+                <span>ESPORTS · FOOTBALL TOP 5 · NBA · TENNIS · POLYMARKET</span>
               </div>
             </div>
           </div>

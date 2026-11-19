@@ -18,8 +18,17 @@ interface ScheduleHubProps {
   onSelectMatch: (match: EsportsMatch) => void;
 }
 
-const GAMES: ('All' | GameTitle)[] = ['All', 'CS2', 'Valorant', 'LoL', 'Dota 2'];
-const FORMATS: ('All' | MatchFormat)[] = ['All', 'Bo1', 'Bo3', 'Bo5'];
+const GAMES: ('All' | GameTitle)[] = [
+  'All',
+  'CS2',
+  'Valorant',
+  'LoL',
+  'Dota 2',
+  'Football',
+  'NBA',
+  'Tennis',
+];
+const FORMATS: ('All' | MatchFormat)[] = ['All', 'Bo1', 'Bo3', 'Bo5', '90m', '4Q', 'Sets'];
 
 function formatLocalTime(iso: string): string {
   try {
@@ -44,6 +53,12 @@ function getGameAccent(game: GameTitle): string {
       return 'bg-sky-500/15 text-sky-300 border-sky-500/30';
     case 'Dota 2':
       return 'bg-red-500/15 text-red-300 border-red-500/30';
+    case 'Football':
+      return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+    case 'NBA':
+      return 'bg-orange-500/15 text-orange-300 border-orange-500/30';
+    case 'Tennis':
+      return 'bg-lime-500/15 text-lime-300 border-lime-500/30';
   }
 }
 

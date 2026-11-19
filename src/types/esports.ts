@@ -1,4 +1,11 @@
-export type GameTitle = 'CS2' | 'Valorant' | 'LoL' | 'Dota 2';
+export type GameTitle =
+  | 'CS2'
+  | 'Valorant'
+  | 'LoL'
+  | 'Dota 2'
+  | 'Football'
+  | 'NBA'
+  | 'Tennis';
 
 export type AnomalyTag =
   | 'Volume Spike'
@@ -77,7 +84,7 @@ export interface RadarResponse {
   note?: string;
 }
 
-export type MatchFormat = 'Bo1' | 'Bo3' | 'Bo5';
+export type MatchFormat = 'Bo1' | 'Bo3' | 'Bo5' | '90m' | '4Q' | 'Sets';
 export type MatchStatus = 'live' | 'upcoming';
 export type RiskLevel = 'Low' | 'Medium' | 'High' | 'Extreme';
 
@@ -121,6 +128,9 @@ export interface ParlayLeg {
   oddsDecimal: number;
   modelWinProbPct: number;
   edgePct: number;
+  investabilityScore: number; // 1-10
+  riskLevel: RiskLevel;
+  riskNote: string;
   rationale: string;
 }
 
@@ -140,6 +150,13 @@ export interface DailyParlayTier {
   maxSafeStakeUsd: number;
 }
 
+export type MatchSource =
+  | 'Polymarket Live'
+  | 'BO3.gg Live'
+  | 'OpenDota Live'
+  | 'LoL Esports API'
+  | 'ESPN Live API';
+
 export interface EsportsMatch {
   id: string;
   game: GameTitle;
@@ -150,7 +167,7 @@ export interface EsportsMatch {
   format: MatchFormat;
   status: MatchStatus;
   startTimeIso: string;
-  source: 'Polymarket Live' | 'BO3.gg Live' | 'OpenDota Live' | 'LoL Esports API';
+  source: MatchSource;
   polymarketUrl?: string;
   volume24h?: number;
   liquidity?: number;
