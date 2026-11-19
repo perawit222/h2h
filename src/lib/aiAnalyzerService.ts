@@ -141,13 +141,13 @@ export function runDeterministicAnalysis(match: EsportsMatch): MatchAnalysis {
 
   // Composite TRUE SERIES WIN PROBABILITY (computed purely from Pillars 1–5, zero odds leakage)
   const structuralDiffA =
-    pillar1EdgeA * 0.34 +
-    pillar2EdgeA * 0.3 +
+    pillar1EdgeA * 0.52 +
+    pillar2EdgeA * 0.34 +
     pillar3EdgeA * 0.14 +
     pillar4EdgeA * 0.1 +
-    pillar5EdgeA * 0.12;
+    pillar5EdgeA * 0.15;
 
-  const trueProbA = clamp((50 + structuralDiffA) / 100, 0.22, 0.84);
+  const trueProbA = clamp((50 + structuralDiffA) / 100, 0.1, 0.92);
   const trueProbB = 1 - trueProbA;
 
   // Identify structurally superior team BEFORE looking at odds
@@ -184,47 +184,50 @@ export function runDeterministicAnalysis(match: EsportsMatch): MatchAnalysis {
   const fairOddsDecimal = Number((1 / recTrueProb).toFixed(2));
   const marketOddsDecimal = recTeam.oddsDecimal;
 
-  // Trap Favorite Detection (heavily juiced favorite 1.08–1.28 with fatigue/stand-in/dead-rubber/negative edge)
+  // Trap Favorite Detection (ONLY trigger on real trap signals: stand-in, suspicious swing, dead-rubber B-tier juiced fav, or severe -10% mispricing)
   const isTrapFavorite =
     marketOddsDecimal <= 1.28 &&
-    (ctx.hasStandIn || ctx.isDeadRubberRisk || recEdgePct < -2.0 || ctx.hasSuspiciousSwing);
+    (ctx.hasStandIn ||
+      ctx.hasSuspiciousSwing ||
+      (ctx.isDeadRubberRisk && match.tier === 'B-Tier' && recEdgePct < -3.5) ||
+      recEdgePct <= -10.0);
 
-  // Series-First Variance Penalty (Bo1 or suspicious swing)
+  // Series-First Variance Penalty (Bo1 or coin-flip with zero structural depth)
   const isBo1 = format === 'Bo1';
-  const isCoinFlipNoDepth = Math.abs(trueProbA - trueProbB) < 0.06 && recEdgePct < 2.2;
+  const isCoinFlipNoDepth = Math.abs(trueProbA - trueProbB) < 0.04 && recEdgePct < 1.5;
 
   // Risk calculation
   let riskPoints = 18;
   if (isBo1) riskPoints += 42;
   else if (format === 'Bo3') riskPoints += 10;
   else if (format === 'Bo5') riskPoints += 4;
-  else if (game === 'Football') riskPoints += 16; // 90m draw risk
+  else if (game === 'Football') riskPoints += 16;
   if (ctx.hasStandIn) riskPoints += 24;
-  if (ctx.isDeadRubberRisk) riskPoints += 14;
+  if (ctx.isDeadRubberRisk) riskPoints += 12;
   if (ctx.hasSuspiciousSwing) riskPoints += 25;
-  if (match.tier === 'B-Tier') riskPoints += 14;
-  if ((match.liquidity ?? 0) > 0 && (match.liquidity ?? 0) < 5000) riskPoints += 12;
-  if (recTrueProb < 0.52) riskPoints += 14;
+  if (match.tier === 'B-Tier') riskPoints += 10;
+  if ((match.liquidity ?? 0) > 0 && (match.liquidity ?? 0) < 3500) riskPoints += 10;
+  if (recTrueProb < 0.52) riskPoints += 12;
 
   const riskLevel: RiskLevel =
     riskPoints >= 72 ? 'Extreme' : riskPoints >= 52 ? 'High' : riskPoints >= 32 ? 'Medium' : 'Low';
 
   // Verdict Badge Assignment (Strictly following Institutional Philosophy)
   let verdictBadge: VerdictBadge;
-  if (isTrapFavorite || ctx.hasSuspiciousSwing || (recEdgePct <= -4.5 && marketOddsDecimal <= 1.45)) {
+  if (isTrapFavorite || ctx.hasSuspiciousSwing) {
     verdictBadge = 'TRAP MATCH / AVOID';
   } else if (isBo1 || isCoinFlipNoDepth || (riskLevel === 'Extreme' && recEdgePct < 4)) {
     verdictBadge = 'HIGH VARIANCE / SKIP';
   } else if (
-    recTrueProb >= 0.6 &&
-    recEdgePct >= 1.0 &&
+    recTrueProb >= 0.64 &&
+    recEdgePct >= -2.5 &&
     (riskLevel === 'Low' || riskLevel === 'Medium') &&
     !ctx.hasStandIn
   ) {
     verdictBadge = 'STRONG SERIES LOCK';
-  } else if (recEdgePct >= 1.5 && recTrueProb >= 0.46) {
+  } else if (recEdgePct >= 1.0 && recTrueProb >= 0.45) {
     verdictBadge = 'VALUE SERIES PLAY';
-  } else if (recTrueProb >= 0.56 && recEdgePct >= -1.5 && riskLevel !== 'Extreme') {
+  } else if (recTrueProb >= 0.56 && recEdgePct >= -4.0 && riskLevel !== 'Extreme') {
     verdictBadge = 'VALUE SERIES PLAY';
   } else {
     verdictBadge = 'HIGH VARIANCE / SKIP';

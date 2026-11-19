@@ -60,7 +60,11 @@ function seededNumber(seedStr: string, min: number, max: number): number {
 }
 
 function normalizeTeamKey(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cleaned = name
+    .toLowerCase()
+    .replace(/\b(fc|cf|ac|sc|esports|gaming|team|new york|los angeles|la|golden state|san antonio|minnesota|memphis|milwaukee|portland|detroit|new orleans|washington|toronto|cleveland|houston|indiana|boston|miami|dallas|denver|phoenix|oklahoma city|chicago|atlanta|brooklyn|charlotte|orlando|philadelphia|sacramento|utah)\b/g, '')
+    .replace(/[^a-z0-9]/g, '');
+  return cleaned || name.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 function buildTeamSnapshot(
@@ -70,10 +74,15 @@ function buildTeamSnapshot(
   rankOverride?: number
 ): TeamSnapshot {
   const impliedProb = Number((1 / Math.max(1.02, oddsDecimal)).toFixed(3));
-  const wr = Math.max(32, Math.min(84, Math.round(impliedProb * 100 + seededNumber(name + 'wr', -8, 8))));
+  const wr = Math.max(24, Math.min(92, Math.round(impliedProb * 96 + seededNumber(name + 'wr', -4, 4))));
   const wins = Math.max(1, Math.min(5, Math.round(wr / 20)));
   const form: ('W' | 'L')[] = Array.from({ length: 5 }, (_, i) =>
     (i + seededNumber(name, 0, 3)) % 5 < wins ? 'W' : 'L'
+  );
+
+  const estimatedRank = Math.max(
+    1,
+    Math.min(60, Math.round((1 - impliedProb) * 48) + seededNumber(name + 'rk', 1, 6))
   );
 
   const metricByGame: Record<GameTitle, { label: string; val: string }> = {
@@ -89,7 +98,7 @@ function buildTeamSnapshot(
   return {
     name,
     tag: makeTag(name),
-    ranking: rankOverride || seededNumber(name + 'rk', 6, 48),
+    ranking: rankOverride || estimatedRank,
     oddsDecimal,
     impliedProb,
     recentForm: form,
@@ -98,10 +107,10 @@ function buildTeamSnapshot(
       name: `${makeTag(name)} Star`,
       metricLabel: metricByGame[game].label,
       metricValue: metricByGame[game].val,
-      trend: wr >= 62 ? 'hot' : wr >= 48 ? 'steady' : 'cold',
+      trend: wr >= 64 ? 'hot' : wr >= 46 ? 'steady' : 'cold',
     },
-    lanWinRate: Math.max(30, Math.min(85, wr + seededNumber(name + 'lan', -5, 6))),
-    onlineWinRate: Math.max(30, Math.min(85, wr + seededNumber(name + 'onl', -4, 6))),
+    lanWinRate: Math.max(24, Math.min(92, wr + seededNumber(name + 'lan', -4, 5))),
+    onlineWinRate: Math.max(24, Math.min(92, wr + seededNumber(name + 'onl', -4, 5))),
   };
 }
 
