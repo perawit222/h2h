@@ -8,40 +8,70 @@ export type AnomalyTag =
   | 'Thin Liquidity'
   | 'Sharp Action';
 
+export type MarketCategory = 'Match Winner' | 'Map Winner' | 'Handicap / Total' | 'Other';
+
 export interface PricePoint {
   time: string;
   prob: number;
 }
 
+export interface SubMarketSnapshot {
+  id: string;
+  question: string;
+  category: MarketCategory;
+  teamA: string;
+  teamB: string;
+  probA: number;
+  probB: number;
+  oddsA: number;
+  oddsB: number;
+  volume24h: number;
+  totalVolume: number;
+  liquidity: number;
+  priceChange24h: number;
+  priceChange1h: number;
+}
+
 export interface AnomalyAlert {
   id: string;
+  eventId: string;
   marketId: string;
   eventTitle: string;
   matchName: string;
+  tournament: string;
+  format: MatchFormat;
   game: GameTitle;
+  teamA: string;
+  teamB: string;
   outcome: string;
   opponentOutcome?: string;
+  marketCategory: MarketCategory;
   volume24h: number;
   totalVolume: number;
   liquidity: number;
   impliedOdds: number; // 0 to 1
   decimalOdds: number;
-  priceChange24h: number; // e.g. +0.18 means +18%
+  opponentImpliedOdds: number;
+  opponentDecimalOdds: number;
+  priceChange24h: number; // e.g. +0.125 means +12.5%
   priceChange1h: number;
   suspicionScore: number; // 0 to 100
   severity: 'critical' | 'elevated' | 'watch';
   tags: AnomalyTag[];
   reasonSummary: string;
   polymarketUrl: string;
+  startTimeIso?: string;
   endDate?: string;
   trend: PricePoint[];
-  tier: 'Tier 1' | 'Tier 2' | 'Tier 3 / Qualifier';
+  tier: 'Tier 1' | 'Lower Tier (T2/T3)';
+  subMarkets: SubMarketSnapshot[];
 }
 
 export interface RadarResponse {
   source: 'live' | 'fallback';
   fetchedAt: string;
   totalMarketsScanned: number;
+  totalEventsScanned: number;
   flaggedCount: number;
   alerts: AnomalyAlert[];
   note?: string;
@@ -57,8 +87,8 @@ export interface TeamSnapshot {
   ranking: number;
   oddsDecimal: number;
   impliedProb: number;
-  recentForm: ('W' | 'L')[]; // last 5-10
-  winRateLast10: number; // 0-100
+  recentForm: ('W' | 'L')[];
+  winRateLast10: number;
   starPlayer: {
     name: string;
     metricLabel: string;
@@ -80,8 +110,9 @@ export interface EsportsMatch {
   format: MatchFormat;
   status: MatchStatus;
   startTimeIso: string;
-  source: 'OpenDota Live' | 'Polymarket Odds' | 'Curated Feed';
+  source: 'Polymarket Live' | 'BO3.gg Live' | 'OpenDota Live' | 'LoL Esports API';
   polymarketUrl?: string;
+  volume24h?: number;
   teamA: TeamSnapshot;
   teamB: TeamSnapshot;
   h2h: {
@@ -106,7 +137,7 @@ export interface ScheduleResponse {
 
 export interface PillarDetail {
   title: string;
-  score: number; // 0-100 edge favorability
+  score: number;
   lean: string;
   summary: string;
   bullets: string[];
@@ -115,8 +146,8 @@ export interface PillarDetail {
 export interface MatchAnalysis {
   matchId: string;
   engine: 'gemini' | 'deterministic';
-  interestScore: number; // 1-10
-  estimatedEdgePct: number; // e.g. 6.4
+  interestScore: number;
+  estimatedEdgePct: number;
   riskLevel: RiskLevel;
   recommendedSide: string;
   fairOddsDecimal: number;

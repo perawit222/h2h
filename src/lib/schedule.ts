@@ -1,24 +1,36 @@
-import { EsportsMatch, GameTitle, ScheduleResponse, TeamSnapshot } from '@/types/esports';
+import { EsportsMatch, GameTitle, MatchFormat, ScheduleResponse, TeamSnapshot } from '@/types/esports';
 import { fetchPolymarketEsportsRadar } from './polymarket';
 
-interface OpenDotaProMatch {
-  match_id: number;
-  radiant_name?: string;
-  dire_name?: string;
-  league_name?: string;
-  series_type?: number; // 0 = Bo1, 1 = Bo3, 2 = Bo5
-  start_time?: number;
-  radiant_win?: boolean;
+interface Bo3MatchRaw {
+  id: number;
+  slug?: string;
+  status?: string; // 'current' | 'upcoming'
+  bo_type?: number;
+  start_date?: string;
+  tier?: string;
+  team1?: { name?: string; slug?: string; rank?: number };
+  team2?: { name?: string; slug?: string; rank?: number };
+  tournament?: { name?: string };
 }
 
 interface OpenDotaLiveGame {
   match_id?: string;
   team_name_radiant?: string;
   team_name_dire?: string;
-  league_id?: number;
   radiant_score?: number;
   dire_score?: number;
-  game_time?: number;
+}
+
+interface LoLEsportsEventRaw {
+  startTime?: string;
+  state?: string; // 'inProgress' | 'unstarted' | 'completed'
+  blockName?: string;
+  league?: { name?: string };
+  match?: {
+    id?: string;
+    strategy?: { count?: number };
+    teams?: { name?: string; code?: string }[];
+  };
 }
 
 function makeTag(name: string): string {
@@ -38,692 +50,363 @@ function seededNumber(seedStr: string, min: number, max: number): number {
   return min + (hash % (max - min + 1));
 }
 
-function buildDotaTeamSnapshot(name: string, oddsDecimal: number): TeamSnapshot {
-  const impliedProb = Number((1 / oddsDecimal).toFixed(3));
-  const wr = seededNumber(name + 'wr', 48, 76);
-  const wins = Math.round(wr / 20);
+function normalizeTeamKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function buildTeamSnapshot(
+  name: string,
+  game: GameTitle,
+  oddsDecimal: number,
+  rankOverride?: number
+): TeamSnapshot {
+  const impliedProb = Number((1 / Math.max(1.02, oddsDecimal)).toFixed(3));
+  const wr = Math.max(32, Math.min(84, Math.round(impliedProb * 100 + seededNumber(name + 'wr', -8, 8))));
+  const wins = Math.max(1, Math.min(5, Math.round(wr / 20)));
   const form: ('W' | 'L')[] = Array.from({ length: 5 }, (_, i) =>
     (i + seededNumber(name, 0, 3)) % 5 < wins ? 'W' : 'L'
   );
-  const kda = (3.4 + seededNumber(name + 'kda', 0, 24) / 10).toFixed(1);
+
+  const metricByGame: Record<GameTitle, { label: string; val: string }> = {
+    CS2: { label: 'HLTV Rating', val: (1.02 + seededNumber(name, 0, 32) / 100).toFixed(2) },
+    Valorant: { label: 'ACS', val: `${195 + seededNumber(name, 0, 62)} ACS` },
+    LoL: { label: 'KDA', val: (3.1 + seededNumber(name, 0, 29) / 10).toFixed(1) },
+    'Dota 2': { label: 'Avg KDA', val: (3.3 + seededNumber(name, 0, 28) / 10).toFixed(1) },
+  };
+
   return {
     name,
     tag: makeTag(name),
-    ranking: seededNumber(name + 'rank', 3, 24),
+    ranking: rankOverride || seededNumber(name + 'rk', 6, 48),
     oddsDecimal,
     impliedProb,
     recentForm: form,
     winRateLast10: wr,
     starPlayer: {
-      name: `${makeTag(name)} Carry`,
-      metricLabel: 'Avg KDA',
-      metricValue: kda,
-      trend: wr >= 64 ? 'hot' : wr >= 54 ? 'steady' : 'cold',
+      name: `${makeTag(name)} Star`,
+      metricLabel: metricByGame[game].label,
+      metricValue: metricByGame[game].val,
+      trend: wr >= 62 ? 'hot' : wr >= 48 ? 'steady' : 'cold',
     },
-    lanWinRate: Math.min(82, wr + seededNumber(name + 'lan', -6, 8)),
-    onlineWinRate: Math.min(82, wr + seededNumber(name + 'onl', -5, 6)),
+    lanWinRate: Math.max(30, Math.min(85, wr + seededNumber(name + 'lan', -5, 6))),
+    onlineWinRate: Math.max(30, Math.min(85, wr + seededNumber(name + 'onl', -4, 6))),
   };
 }
 
-async function fetchOpenDotaLiveMatches(): Promise<EsportsMatch[]> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+const KEY_MAPS_BY_GAME: Record<GameTitle, string[]> = {
+  CS2: ['Mirage', 'Inferno', 'Ancient', 'Nuke', 'Dust2'],
+  Valorant: ['Ascent', 'Haven', 'Lotus', 'Sunset', 'Split'],
+  LoL: ['Azir', 'Vi', 'KaiSa', 'Rumble', 'Varus'],
+  'Dota 2': ['Shadow Fiend', 'Tiny', 'Puck', 'Centaur', 'Morphling'],
+};
 
+async function fetchBo3Cs2Matches(): Promise<EsportsMatch[]> {
   try {
-    const [liveRes, proRes] = await Promise.all([
-      fetch('https://api.opendota.com/api/live', {
+    const res = await fetch(
+      'https://api.bo3.gg/api/v1/matches?page[offset]=0&page[limit]=14&sort=start_date&filter[matches.status][in]=current,upcoming&with=teams,tournament',
+      {
         next: { revalidate: 300 },
-        signal: controller.signal,
-      }),
-      fetch('https://api.opendota.com/api/proMatches', {
-        next: { revalidate: 300 },
-        signal: controller.signal,
-      }),
-    ]);
-
-    const matches: EsportsMatch[] = [];
-
-    if (liveRes.ok) {
-      const liveGames: OpenDotaLiveGame[] = await liveRes.json();
-      const namedLive = liveGames
-        .filter((g) => g.team_name_radiant && g.team_name_dire && g.team_name_radiant !== g.team_name_dire)
-        .slice(0, 2);
-
-      for (const g of namedLive) {
-        const teamAName = g.team_name_radiant!.trim();
-        const teamBName = g.team_name_dire!.trim();
-        const scoreDiff = (g.radiant_score || 0) - (g.dire_score || 0);
-        const oddsA = scoreDiff >= 4 ? 1.52 : scoreDiff <= -4 ? 2.45 : 1.85;
-        const oddsB = Number((1 / (1.04 - 1 / oddsA)).toFixed(2));
-
-        matches.push({
-          id: `od-live-${g.match_id || teamAName}`,
-          game: 'Dota 2',
-          tournament: 'OpenDota Live Pro Circuit',
-          tier: 'A-Tier',
-          stage: 'Live Series',
-          isLan: false,
-          format: 'Bo3',
-          status: 'live',
-          startTimeIso: new Date().toISOString(),
-          source: 'OpenDota Live',
-          teamA: buildDotaTeamSnapshot(teamAName, oddsA),
-          teamB: buildDotaTeamSnapshot(teamBName, oddsB),
-          h2h: {
-            teamAWins: seededNumber(teamAName, 2, 6),
-            teamBWins: seededNumber(teamBName, 2, 6),
-            lastMeetingSummary: `Live score ${g.radiant_score ?? 0}–${g.dire_score ?? 0} kills in active map`,
-            mapDiffA: scoreDiff >= 0 ? 1 : -1,
-          },
-          mapOrDraftContext: {
-            edgeTeam: scoreDiff > 2 ? 'A' : scoreDiff < -2 ? 'B' : 'Even',
-            keyMapsOrHeroes: ['Shadow Fiend', 'Tiny', 'Ringmaster', 'Beastmaster'],
-            statHighlight: 'Radiant first-Roshan conversion rate at 68% in current patch',
-          },
-          narrativeNotes: [
-            'Live match telemetry pulled directly from OpenDota public API',
-            'High early-game kill tempo favors aggressive mid-lane rotations',
-          ],
-        });
+        signal: AbortSignal.timeout(5500),
+        headers: { 'User-Agent': 'H2H-Esports-Terminal/1.0' },
       }
-    }
+    );
+    if (!res.ok) return [];
+    const json = (await res.json()) as { results?: Bo3MatchRaw[] };
+    const rows = json.results || [];
+    const out: EsportsMatch[] = [];
 
-    if (proRes.ok && matches.length < 2) {
-      const proMatches: OpenDotaProMatch[] = await proRes.json();
-      const namedPro = proMatches
-        .filter((m) => m.radiant_name && m.dire_name && m.league_name)
-        .slice(0, 2 - matches.length);
+    for (const m of rows) {
+      const t1 = m.team1?.name?.trim();
+      const t2 = m.team2?.name?.trim();
+      if (!t1 || !t2 || /tbd/i.test(t1) || /tbd/i.test(t2)) continue;
 
-      namedPro.forEach((m, idx) => {
-        const teamAName = m.radiant_name!.trim();
-        const teamBName = m.dire_name!.trim();
-        const oddsA = idx % 2 === 0 ? 1.72 : 2.15;
-        const oddsB = idx % 2 === 0 ? 2.18 : 1.74;
-        const format = m.series_type === 2 ? 'Bo5' : m.series_type === 0 ? 'Bo1' : 'Bo3';
+      const format: MatchFormat = m.bo_type === 5 ? 'Bo5' : m.bo_type === 1 ? 'Bo1' : 'Bo3';
+      const tierMap: Record<string, 'S-Tier' | 'A-Tier' | 'B-Tier'> = {
+        s: 'S-Tier',
+        a: 'A-Tier',
+        b: 'B-Tier',
+        c: 'B-Tier',
+      };
+      const tier = tierMap[(m.tier || '').toLowerCase()] || 'B-Tier';
+      const status = m.status === 'current' ? 'live' : 'upcoming';
 
-        matches.push({
-          id: `od-pro-${m.match_id}`,
-          game: 'Dota 2',
-          tournament: m.league_name || 'Dota 2 Pro Circuit',
-          tier: 'A-Tier',
-          stage: 'Group Stage / Series',
-          isLan: false,
-          format,
-          status: 'upcoming',
-          startTimeIso: new Date(Date.now() + (idx + 2) * 3600 * 1000).toISOString(),
-          source: 'OpenDota Live',
-          teamA: buildDotaTeamSnapshot(teamAName, oddsA),
-          teamB: buildDotaTeamSnapshot(teamBName, oddsB),
-          h2h: {
-            teamAWins: seededNumber(teamAName + 'h2h', 2, 7),
-            teamBWins: seededNumber(teamBName + 'h2h', 1, 6),
-            lastMeetingSummary: 'Split last 2 series 1-1 with average game time 41m',
-            mapDiffA: seededNumber(teamAName, -2, 3),
-          },
-          mapOrDraftContext: {
-            edgeTeam: oddsA < oddsB ? 'A' : 'B',
-            keyMapsOrHeroes: ['Morphling', 'Puck', 'Centaur', 'Tusk'],
-            statHighlight: 'Draft flexibility favors last-pick mid counter in Bo3',
-          },
-          narrativeNotes: [
-            'Matchup sourced from OpenDota Pro Matches feed',
-            'Patch economy favors greedy scaling offlaners past 30 minutes',
-          ],
-        });
+      // Estimate balanced opening odds from rank if Polymarket doesn't cover it
+      const r1 = m.team1?.rank || 35;
+      const r2 = m.team2?.rank || 35;
+      const probA = Math.max(0.28, Math.min(0.72, 0.5 + (r2 - r1) * 0.008));
+      const oddsA = Number((1 / probA).toFixed(2));
+      const oddsB = Number((1 / (1 - probA)).toFixed(2));
+
+      out.push({
+        id: `bo3-${m.id}`,
+        game: 'CS2',
+        tournament: m.tournament?.name || 'CS2 Pro Circuit',
+        tier,
+        stage: status === 'live' ? 'Live Series' : 'Scheduled Match',
+        isLan: tier === 'S-Tier',
+        format,
+        status,
+        startTimeIso: m.start_date || new Date().toISOString(),
+        source: 'BO3.gg Live',
+        teamA: buildTeamSnapshot(t1, 'CS2', oddsA, m.team1?.rank),
+        teamB: buildTeamSnapshot(t2, 'CS2', oddsB, m.team2?.rank),
+        h2h: {
+          teamAWins: seededNumber(t1 + t2, 1, 5),
+          teamBWins: seededNumber(t2 + t1, 1, 5),
+          lastMeetingSummary: `Live CS2 fixture synced from BO3.gg (${format})`,
+          mapDiffA: seededNumber(t1, -2, 2),
+        },
+        mapOrDraftContext: {
+          edgeTeam: probA > 0.54 ? 'A' : probA < 0.46 ? 'B' : 'Even',
+          keyMapsOrHeroes: KEY_MAPS_BY_GAME.CS2.slice(0, 4),
+          statHighlight: `BO3.gg real-time CS2 fixture — veto phase will dictate CT-side edge`,
+        },
+        narrativeNotes: [
+          `Real live/upcoming CS2 match sourced directly from BO3.gg public API`,
+          tier === 'B-Tier'
+            ? 'Lower-tier online series: monitor Polymarket for late pre-match steam'
+            : 'High-stakes tournament series with full map pool depth',
+        ],
       });
     }
-
-    return matches;
+    return out;
   } catch {
     return [];
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
-function getCuratedDailyMatches(): EsportsMatch[] {
-  const now = Date.now();
-  const offset = (hours: number) => new Date(now + hours * 3600 * 1000).toISOString();
-
-  return [
-    {
-      id: 'cs2-vitality-spirit',
-      game: 'CS2',
-      tournament: 'BLAST Premier World Final',
-      tier: 'S-Tier',
-      stage: 'Upper Bracket Semifinal',
-      isLan: true,
-      format: 'Bo3',
-      status: 'live',
-      startTimeIso: offset(-0.3),
-      source: 'Curated Feed',
-      teamA: {
-        name: 'Team Vitality',
-        tag: 'VIT',
-        ranking: 2,
-        oddsDecimal: 1.78,
-        impliedProb: 0.562,
-        recentForm: ['W', 'W', 'W', 'L', 'W'],
-        winRateLast10: 76,
-        starPlayer: {
-          name: 'ZywOo',
-          metricLabel: 'HLTV 2.1 Rating',
-          metricValue: '1.36',
-          trend: 'hot',
-        },
-        lanWinRate: 78,
-        onlineWinRate: 71,
-      },
-      teamB: {
-        name: 'Team Spirit',
-        tag: 'TS',
-        ranking: 3,
-        oddsDecimal: 2.1,
-        impliedProb: 0.476,
-        recentForm: ['W', 'L', 'W', 'W', 'W'],
-        winRateLast10: 72,
-        starPlayer: {
-          name: 'donk',
-          metricLabel: 'HLTV 2.1 Rating',
-          metricValue: '1.41',
-          trend: 'hot',
-        },
-        lanWinRate: 74,
-        onlineWinRate: 79,
-      },
-      h2h: {
-        teamAWins: 5,
-        teamBWins: 3,
-        lastMeetingSummary: 'Vitality won 2-1 at IEM Cologne (13-11 Dust2, 9-13 Nuke, 13-10 Mirage)',
-        mapDiffA: 3,
-      },
-      mapOrDraftContext: {
-        edgeTeam: 'A',
-        keyMapsOrHeroes: ['Dust2', 'Nuke', 'Mirage', 'Anubis'],
-        statHighlight: 'Vitality holds a 64% pistol-round conversion rate on LAN vs Spirit’s 51%',
-      },
-      narrativeNotes: [
-        'Arena stage LAN buff historically boosts Vitality mid-round calling',
-        'donk entry-fragging variance creates explosive Map 1 upside for Spirit',
-      ],
-    },
-    {
-      id: 'cs2-navi-faze',
-      game: 'CS2',
-      tournament: 'ESL Pro League',
-      tier: 'S-Tier',
-      stage: 'Quarterfinal',
-      isLan: true,
-      format: 'Bo3',
-      status: 'upcoming',
-      startTimeIso: offset(2.5),
-      source: 'Curated Feed',
-      teamA: {
-        name: 'Natus Vincere',
-        tag: 'NAVI',
-        ranking: 1,
-        oddsDecimal: 1.62,
-        impliedProb: 0.617,
-        recentForm: ['W', 'W', 'W', 'W', 'L'],
-        winRateLast10: 80,
-        starPlayer: {
-          name: 'jL',
-          metricLabel: 'HLTV 2.1 Rating',
-          metricValue: '1.22',
-          trend: 'hot',
-        },
-        lanWinRate: 81,
-        onlineWinRate: 74,
-      },
-      teamB: {
-        name: 'FaZe Clan',
-        tag: 'FAZE',
-        ranking: 6,
-        oddsDecimal: 2.35,
-        impliedProb: 0.425,
-        recentForm: ['L', 'W', 'L', 'W', 'W'],
-        winRateLast10: 56,
-        starPlayer: {
-          name: 'ropz',
-          metricLabel: 'HLTV 2.1 Rating',
-          metricValue: '1.16',
-          trend: 'steady',
-        },
-        lanWinRate: 63,
-        onlineWinRate: 51,
-      },
-      h2h: {
-        teamAWins: 4,
-        teamBWins: 4,
-        lastMeetingSummary: 'Split last 4 LAN Bo3s; 3 of 4 went the full 3-map distance',
-        mapDiffA: 1,
-      },
-      mapOrDraftContext: {
-        edgeTeam: 'A',
-        keyMapsOrHeroes: ['Ancient', 'Mirage', 'Inferno'],
-        statHighlight: 'NAVI boasts 78% CT-side win rate on Ancient over the past 90 days',
-      },
-      narrativeNotes: [
-        'FaZe notoriously powers up in elimination playoff brackets ("FaZe Magic")',
-        'NAVI structured T-side defaults punish FaZe slow starts',
-      ],
-    },
-    {
-      id: 'val-sen-g2',
-      game: 'Valorant',
-      tournament: 'VCT Americas Stage',
-      tier: 'S-Tier',
-      stage: 'Playoffs Upper Final',
-      isLan: true,
-      format: 'Bo5',
-      status: 'upcoming',
-      startTimeIso: offset(4.0),
-      source: 'Curated Feed',
-      teamA: {
-        name: 'G2 Esports',
-        tag: 'G2',
-        ranking: 2,
-        oddsDecimal: 1.68,
-        impliedProb: 0.595,
-        recentForm: ['W', 'W', 'W', 'W', 'W'],
-        winRateLast10: 84,
-        starPlayer: {
-          name: 'jawgemo',
-          metricLabel: 'ACS / Rating',
-          metricValue: '248 ACS',
-          trend: 'hot',
-        },
-        lanWinRate: 80,
-        onlineWinRate: 78,
-      },
-      teamB: {
-        name: 'Sentinels',
-        tag: 'SEN',
-        ranking: 5,
-        oddsDecimal: 2.25,
-        impliedProb: 0.444,
-        recentForm: ['W', 'L', 'W', 'W', 'L'],
-        winRateLast10: 64,
-        starPlayer: {
-          name: 'zekken',
-          metricLabel: 'ACS / Rating',
-          metricValue: '254 ACS',
-          trend: 'hot',
-        },
-        lanWinRate: 69,
-        onlineWinRate: 61,
-      },
-      h2h: {
-        teamAWins: 4,
-        teamBWins: 2,
-        lastMeetingSummary: 'G2 took the last Bo3 2-0 with dominant post-plant discipline on Ascent & Haven',
-        mapDiffA: 4,
-      },
-      mapOrDraftContext: {
-        edgeTeam: 'A',
-        keyMapsOrHeroes: ['Ascent', 'Haven', 'Abyss', 'Lotus'],
-        statHighlight: 'G2 leads VCT Americas in 4v5 retakes (41%) and utility trade efficiency',
-      },
-      narrativeNotes: [
-        'Bo5 format rewards G2 deeper 6-map pool over Sentinels',
-        'LA Studio crowd heavily favors Sentinels momentum swings',
-      ],
-    },
-    {
-      id: 'val-fnc-th',
-      game: 'Valorant',
-      tournament: 'VCT EMEA',
-      tier: 'S-Tier',
-      stage: 'Group Stage',
-      isLan: true,
-      format: 'Bo3',
-      status: 'upcoming',
-      startTimeIso: offset(1.5),
-      source: 'Curated Feed',
-      teamA: {
-        name: 'Fnatic',
-        tag: 'FNC',
-        ranking: 4,
-        oddsDecimal: 1.92,
-        impliedProb: 0.521,
-        recentForm: ['W', 'L', 'W', 'W', 'W'],
-        winRateLast10: 70,
-        starPlayer: {
-          name: 'Alfajer',
-          metricLabel: 'ACS / Rating',
-          metricValue: '242 ACS',
-          trend: 'hot',
-        },
-        lanWinRate: 74,
-        onlineWinRate: 71,
-        hasStandIn: false,
-      },
-      teamB: {
-        name: 'Team Heretics',
-        tag: 'TH',
-        ranking: 3,
-        oddsDecimal: 1.92,
-        impliedProb: 0.521,
-        recentForm: ['W', 'W', 'L', 'W', 'W'],
-        winRateLast10: 74,
-        starPlayer: {
-          name: 'MiniBoo',
-          metricLabel: 'ACS / Rating',
-          metricValue: '239 ACS',
-          trend: 'steady',
-        },
-        lanWinRate: 72,
-        onlineWinRate: 76,
-      },
-      h2h: {
-        teamAWins: 3,
-        teamBWins: 3,
-        lastMeetingSummary: 'Heretics edged Fnatic 2-1 in overtime on Sunset last month',
-        mapDiffA: 0,
-      },
-      mapOrDraftContext: {
-        edgeTeam: 'B',
-        keyMapsOrHeroes: ['Sunset', 'Bind', 'Split'],
-        statHighlight: 'Heretics double-duelist Neon comps generate +14% first-blood differential',
-      },
-      narrativeNotes: [
-        'Coin-flip market pricing undervalues Heretics aggressive tempo on Split/Sunset',
-        'Fnatic veteran IGL composure shines in overtime pressure rounds',
-      ],
-    },
-    {
-      id: 'lol-t1-geng',
-      game: 'LoL',
-      tournament: 'LCK Cup Playoffs',
-      tier: 'S-Tier',
-      stage: 'Semifinal',
-      isLan: true,
-      format: 'Bo5',
-      status: 'upcoming',
-      startTimeIso: offset(3.2),
-      source: 'Curated Feed',
-      teamA: {
-        name: 'Gen.G',
-        tag: 'GEN',
-        ranking: 1,
-        oddsDecimal: 1.58,
-        impliedProb: 0.633,
-        recentForm: ['W', 'W', 'W', 'W', 'W'],
-        winRateLast10: 88,
-        starPlayer: {
-          name: 'Chovy',
-          metricLabel: 'CS/M & KDA',
-          metricValue: '10.6 CS/m',
-          trend: 'hot',
-        },
-        lanWinRate: 86,
-        onlineWinRate: 85,
-      },
-      teamB: {
-        name: 'T1',
-        tag: 'T1',
-        ranking: 2,
-        oddsDecimal: 2.45,
-        impliedProb: 0.408,
-        recentForm: ['W', 'L', 'W', 'W', 'L'],
-        winRateLast10: 66,
-        starPlayer: {
-          name: 'Faker',
-          metricLabel: 'Clutch KP%',
-          metricValue: '71.4% KP',
-          trend: 'steady',
-        },
-        lanWinRate: 75,
-        onlineWinRate: 64,
-      },
-      h2h: {
-        teamAWins: 9,
-        teamBWins: 3,
-        lastMeetingSummary: 'Gen.G holds a dominant domestic LCK H2H streak, though T1 won their Worlds Bo5',
-        mapDiffA: 11,
-      },
-      mapOrDraftContext: {
-        edgeTeam: 'A',
-        keyMapsOrHeroes: ['Azir', 'KSante', 'Sejuani', 'Varus'],
-        statHighlight: 'Gen.G averages +2,150 gold differential at 15 minutes across Bo5s',
-      },
-      narrativeNotes: [
-        'Classic "LCK Domestic Gen.G Curse" vs "T1 Elimination Buff" narrative',
-        'Fearless Draft format increases mid-series volatility in Games 4–5',
-      ],
-    },
-    {
-      id: 'lol-g2-kc',
-      game: 'LoL',
-      tournament: 'LEC Winter Split',
-      tier: 'S-Tier',
-      stage: 'Regular Season',
-      isLan: true,
-      format: 'Bo1',
-      status: 'upcoming',
-      startTimeIso: offset(5.5),
-      source: 'Curated Feed',
-      teamA: {
-        name: 'G2 Esports',
-        tag: 'G2',
-        ranking: 4,
-        oddsDecimal: 1.48,
-        impliedProb: 0.676,
-        recentForm: ['W', 'W', 'L', 'W', 'W'],
-        winRateLast10: 76,
-        starPlayer: {
-          name: 'Caps',
-          metricLabel: 'DMG Share',
-          metricValue: '29.2%',
-          trend: 'hot',
-        },
-        lanWinRate: 77,
-        onlineWinRate: 75,
-      },
-      teamB: {
-        name: 'Karmine Corp',
-        tag: 'KC',
-        ranking: 11,
-        oddsDecimal: 2.75,
-        impliedProb: 0.364,
-        recentForm: ['W', 'W', 'W', 'L', 'W'],
-        winRateLast10: 68,
-        starPlayer: {
-          name: 'Caliste',
-          metricLabel: 'DPM',
-          metricValue: '745 DPM',
-          trend: 'hot',
-        },
-        lanWinRate: 64,
-        onlineWinRate: 66,
-      },
-      h2h: {
-        teamAWins: 4,
-        teamBWins: 1,
-        lastMeetingSummary: 'G2 won 2-1 in playoffs; KC took Game 1 via early bot-lane snowball',
-        mapDiffA: 4,
-      },
-      mapOrDraftContext: {
-        edgeTeam: 'Even',
-        keyMapsOrHeroes: ['Corki', 'Vi', 'KaiSa', 'Rell'],
-        statHighlight: 'Bo1 variance elevates KC early-game bot lane skirmish upside (63% First Blood)',
-      },
-      narrativeNotes: [
-        'Bo1 format historically creates high upset frequency in LEC regular season',
-        'Karmine Corp rookie ADC Caliste in scorching form — dog value alert',
-      ],
-    },
-    {
-      id: 'dota-liquid-falcons',
-      game: 'Dota 2',
-      tournament: 'DreamLeague Season 25',
-      tier: 'S-Tier',
-      stage: 'Playoffs Upper Bracket',
-      isLan: false,
-      format: 'Bo3',
-      status: 'upcoming',
-      startTimeIso: offset(3.8),
-      source: 'Curated Feed',
-      teamA: {
-        name: 'Team Falcons',
-        tag: 'FLCN',
-        ranking: 1,
-        oddsDecimal: 1.72,
-        impliedProb: 0.581,
-        recentForm: ['W', 'W', 'W', 'L', 'W'],
-        winRateLast10: 78,
-        starPlayer: {
-          name: 'Malr1ne',
-          metricLabel: 'Avg KDA',
-          metricValue: '6.4',
-          trend: 'hot',
-        },
-        lanWinRate: 76,
-        onlineWinRate: 81,
-      },
-      teamB: {
-        name: 'Team Liquid',
-        tag: 'TL',
-        ranking: 2,
-        oddsDecimal: 2.18,
-        impliedProb: 0.459,
-        recentForm: ['W', 'W', 'L', 'W', 'W'],
-        winRateLast10: 74,
-        starPlayer: {
-          name: 'Nisha',
-          metricLabel: 'Avg KDA',
-          metricValue: '5.9',
-          trend: 'hot',
-        },
-        lanWinRate: 79,
-        onlineWinRate: 71,
-      },
-      h2h: {
-        teamAWins: 6,
-        teamBWins: 4,
-        lastMeetingSummary: 'Falcons took 2-1 in group stage; Liquid won their last LAN grand final 3-0',
-        mapDiffA: 2,
-      },
-      mapOrDraftContext: {
-        edgeTeam: 'A',
-        keyMapsOrHeroes: ['Pangolier', 'Timber', 'Dragon Knight', 'Hoodwink'],
-        statHighlight: 'Falcons flex-pick draft priority yields 71% win rate on Dire side',
-      },
-      narrativeNotes: [
-        'Online tournament format gives Falcons a measurable comfort edge over Liquid',
-        'Liquid macro late-game teamfighting remains elite past 40 minutes',
-      ],
-    },
-  ];
-}
-
-function buildPolymarketScheduleMatches(
-  alerts: Awaited<ReturnType<typeof fetchPolymarketEsportsRadar>>['alerts']
-): EsportsMatch[] {
-  const h2hMatches: EsportsMatch[] = [];
-  const seen = new Set<string>();
-
-  for (const a of alerts) {
-    if (!a.opponentOutcome) continue;
-    const o1 = a.outcome.trim();
-    const o2 = a.opponentOutcome.trim();
-    if (
-      !o1 ||
-      !o2 ||
-      /^(yes|no|over|under|draw|tie)$/i.test(o1) ||
-      /^(yes|no|over|under|draw|tie)$/i.test(o2)
-    ) {
-      continue;
-    }
-
-    const key = `${a.game}-${[o1, o2].sort().join('-').toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    const probA = Math.max(0.08, Math.min(0.92, a.impliedOdds));
-    const probB = Math.max(0.08, Math.min(0.92, 1 - probA));
-    const oddsA = Number((1 / probA).toFixed(2));
-    const oddsB = Number((1 / probB).toFixed(2));
-
-    const format = /bo5/i.test(a.matchName)
-      ? 'Bo5'
-      : /bo1/i.test(a.matchName)
-        ? 'Bo1'
-        : 'Bo3';
-
-    const keyMapsByGame: Record<GameTitle, string[]> = {
-      CS2: ['Mirage', 'Inferno', 'Ancient', 'Nuke'],
-      Valorant: ['Ascent', 'Haven', 'Lotus', 'Sunset'],
-      LoL: ['Azir', 'Vi', 'KaiSa', 'Rumble'],
-      'Dota 2': ['Shadow Fiend', 'Tiny', 'Puck', 'Centaur'],
-    };
-
-    h2hMatches.push({
-      id: `pm-sched-${a.marketId}`,
-      game: a.game,
-      tournament: a.eventTitle.length > 48 ? `${a.eventTitle.slice(0, 47)}…` : a.eventTitle,
-      tier: a.tier === 'Tier 1' ? 'S-Tier' : a.tier === 'Tier 2' ? 'A-Tier' : 'B-Tier',
-      stage: 'Polymarket Live Market',
-      isLan: a.tier === 'Tier 1',
-      format,
-      status: 'upcoming',
-      startTimeIso: a.endDate || new Date(Date.now() + 3 * 3600 * 1000).toISOString(),
-      source: 'Polymarket Odds',
-      polymarketUrl: a.polymarketUrl,
-      teamA: buildDotaTeamSnapshot(o1, oddsA),
-      teamB: buildDotaTeamSnapshot(o2, oddsB),
-      h2h: {
-        teamAWins: seededNumber(o1 + o2, 1, 6),
-        teamBWins: seededNumber(o2 + o1, 1, 6),
-        lastMeetingSummary: `Live Polymarket order-book pricing ($${Math.round(a.volume24h).toLocaleString()} 24h vol)`,
-        mapDiffA: seededNumber(o1, -2, 3),
-      },
-      mapOrDraftContext: {
-        edgeTeam: probA > 0.56 ? 'A' : probB > 0.56 ? 'B' : 'Even',
-        keyMapsOrHeroes: keyMapsByGame[a.game],
-        statHighlight: `Live market implies ${Math.round(probA * 100)}% vs ${Math.round(probB * 100)}% (${a.priceChange24h >= 0 ? '+' : ''}${Math.round(a.priceChange24h * 100)}% 24h drift)`,
-      },
-      narrativeNotes: [
-        a.reasonSummary,
-        `Polymarket liquidity pool: $${Math.round(a.liquidity).toLocaleString()}`,
-      ],
+async function fetchOpenDotaLive(): Promise<EsportsMatch[]> {
+  try {
+    const res = await fetch('https://api.opendota.com/api/live', {
+      next: { revalidate: 300 },
+      signal: AbortSignal.timeout(5000),
     });
+    if (!res.ok) return [];
+    const games = (await res.json()) as OpenDotaLiveGame[];
+    const named = games
+      .filter((g) => g.team_name_radiant && g.team_name_dire && g.team_name_radiant !== g.team_name_dire)
+      .slice(0, 4);
 
-    if (h2hMatches.length >= 6) break;
+    return named.map((g) => {
+      const t1 = g.team_name_radiant!.trim();
+      const t2 = g.team_name_dire!.trim();
+      const diff = (g.radiant_score || 0) - (g.dire_score || 0);
+      const oddsA = diff >= 5 ? 1.48 : diff <= -5 ? 2.55 : 1.85;
+      const oddsB = Number((1 / (1.03 - 1 / oddsA)).toFixed(2));
+
+      return {
+        id: `od-live-${g.match_id || t1}`,
+        game: 'Dota 2',
+        tournament: 'Dota 2 Live Pro Match',
+        tier: 'A-Tier',
+        stage: `Live (${g.radiant_score ?? 0}–${g.dire_score ?? 0} kills)`,
+        isLan: false,
+        format: 'Bo3',
+        status: 'live',
+        startTimeIso: new Date().toISOString(),
+        source: 'OpenDota Live',
+        teamA: buildTeamSnapshot(t1, 'Dota 2', oddsA),
+        teamB: buildTeamSnapshot(t2, 'Dota 2', oddsB),
+        h2h: {
+          teamAWins: seededNumber(t1, 1, 5),
+          teamBWins: seededNumber(t2, 1, 5),
+          lastMeetingSummary: `Currently live in-game: Radiant ${g.radiant_score ?? 0} – ${g.dire_score ?? 0} Dire`,
+          mapDiffA: diff >= 0 ? 1 : -1,
+        },
+        mapOrDraftContext: {
+          edgeTeam: diff > 2 ? 'A' : diff < -2 ? 'B' : 'Even',
+          keyMapsOrHeroes: KEY_MAPS_BY_GAME['Dota 2'].slice(0, 4),
+          statHighlight: 'Live OpenDota kill-score telemetry active',
+        },
+        narrativeNotes: [
+          'Live Dota 2 match pulled directly from OpenDota public API',
+          'Live odds dynamically reflect current kill-score momentum',
+        ],
+      };
+    });
+  } catch {
+    return [];
   }
+}
 
-  return h2hMatches;
+async function fetchLoLEsportsSchedule(): Promise<EsportsMatch[]> {
+  try {
+    const res = await fetch(
+      'https://esports-api.lolesports.com/persisted/gw/getSchedule?hl=en-US',
+      {
+        next: { revalidate: 300 },
+        signal: AbortSignal.timeout(5500),
+        headers: { 'x-api-key': '0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z' },
+      }
+    );
+    if (!res.ok) return [];
+    const json = await res.json();
+    const events: LoLEsportsEventRaw[] = json?.data?.schedule?.events || [];
+
+    // Filter to inProgress or unstarted matches (real upcoming/live LoL matches)
+    const active = events
+      .filter((e) => (e.state === 'inProgress' || e.state === 'unstarted') && e.match?.teams?.length === 2)
+      .filter((e) => {
+        const names = (e.match?.teams || []).map((t) => t.name || '');
+        return names.every((n) => n && !/^tbd$/i.test(n));
+      })
+      .slice(0, 8);
+
+    return active.map((e, idx) => {
+      const t1 = e.match!.teams![0].name!;
+      const t2 = e.match!.teams![1].name!;
+      const bo = e.match?.strategy?.count;
+      const format: MatchFormat = bo === 5 ? 'Bo5' : bo === 1 ? 'Bo1' : 'Bo3';
+      const status = e.state === 'inProgress' ? 'live' : 'upcoming';
+      const probA = Math.max(0.35, Math.min(0.65, 0.5 + seededNumber(t1 + t2, -14, 14) / 100));
+      const oddsA = Number((1 / probA).toFixed(2));
+      const oddsB = Number((1 / (1 - probA)).toFixed(2));
+
+      return {
+        id: `lol-esports-${e.match?.id || idx}`,
+        game: 'LoL',
+        tournament: e.league?.name || 'LoL Esports',
+        tier: /(LCK|LPL|LEC|LCS|Worlds|MSI)/i.test(e.league?.name || '') ? 'S-Tier' : 'A-Tier',
+        stage: e.blockName || 'Official Schedule',
+        isLan: true,
+        format,
+        status,
+        startTimeIso: e.startTime || new Date().toISOString(),
+        source: 'LoL Esports API',
+        teamA: buildTeamSnapshot(t1, 'LoL', oddsA),
+        teamB: buildTeamSnapshot(t2, 'LoL', oddsB),
+        h2h: {
+          teamAWins: seededNumber(t1, 1, 6),
+          teamBWins: seededNumber(t2, 1, 6),
+          lastMeetingSummary: `Official ${e.league?.name || 'LoL Esports'} fixture (${format})`,
+          mapDiffA: seededNumber(t1, -2, 3),
+        },
+        mapOrDraftContext: {
+          edgeTeam: probA > 0.54 ? 'A' : probA < 0.46 ? 'B' : 'Even',
+          keyMapsOrHeroes: KEY_MAPS_BY_GAME.LoL.slice(0, 4),
+          statHighlight: 'Official Riot LoL Esports schedule feed — side selection & draft priority key',
+        },
+        narrativeNotes: [
+          `Official Riot LoL Esports API fixture (${e.league?.name || 'Pro League'})`,
+          format === 'Bo1'
+            ? 'Bo1 format amplifies early-game skirmish and draft volatility'
+            : 'Series format rewards macro adaptation and deep champion pools',
+        ],
+      };
+    });
+  } catch {
+    return [];
+  }
 }
 
 export async function fetchDailySchedule(): Promise<ScheduleResponse> {
   const fetchedAt = new Date().toISOString();
   const sourcesUsed: string[] = [];
 
-  const [openDotaMatches, radar] = await Promise.all([
-    fetchOpenDotaLiveMatches(),
+  const [radar, bo3Matches, openDotaMatches, lolMatches] = await Promise.all([
     fetchPolymarketEsportsRadar(),
+    fetchBo3Cs2Matches(),
+    fetchOpenDotaLive(),
+    fetchLoLEsportsSchedule(),
   ]);
 
-  if (openDotaMatches.length > 0) {
-    sourcesUsed.push('OpenDota Public API');
-  }
+  const nowMs = Date.now();
+  const matchMap = new Map<string, EsportsMatch>();
 
-  const polymarketMatches =
-    radar.source === 'live' ? buildPolymarketScheduleMatches(radar.alerts) : [];
-  if (polymarketMatches.length > 0) {
+  // 1. Real Polymarket Live H2H Matches (CS2, Dota 2, Valorant, LoL) with real moneyline odds
+  if (radar.source === 'live' && radar.alerts.length > 0) {
     sourcesUsed.push('Polymarket Live Odds');
+    for (const a of radar.alerts) {
+      const startIso = a.startTimeIso || a.endDate || new Date().toISOString();
+      const startMs = new Date(startIso).getTime();
+      const isLive = startMs <= nowMs && startMs >= nowMs - 4 * 3600 * 1000;
+
+      const pairKey = `${a.game}-${[normalizeTeamKey(a.teamA), normalizeTeamKey(a.teamB)].sort().join('-')}`;
+      if (matchMap.has(pairKey)) continue;
+
+      const primarySub = a.subMarkets[0];
+      const oddsA = primarySub ? primarySub.oddsA : a.decimalOdds;
+      const oddsB = primarySub ? primarySub.oddsB : a.opponentDecimalOdds;
+
+      matchMap.set(pairKey, {
+        id: `pm-sched-${a.eventId}`,
+        game: a.game,
+        tournament: a.tournament,
+        tier: a.tier === 'Tier 1' ? 'S-Tier' : 'B-Tier',
+        stage: isLive ? 'Live on Polymarket' : `${a.subMarkets.length} Live Markets`,
+        isLan: a.tier === 'Tier 1',
+        format: a.format,
+        status: isLive ? 'live' : 'upcoming',
+        startTimeIso: startIso,
+        source: 'Polymarket Live',
+        polymarketUrl: a.polymarketUrl,
+        volume24h: a.volume24h,
+        teamA: buildTeamSnapshot(a.teamA, a.game, oddsA),
+        teamB: buildTeamSnapshot(a.teamB, a.game, oddsB),
+        h2h: {
+          teamAWins: seededNumber(a.teamA + a.teamB, 1, 6),
+          teamBWins: seededNumber(a.teamB + a.teamA, 1, 6),
+          lastMeetingSummary: `Live Polymarket market: $${Math.round(a.volume24h).toLocaleString()} 24h volume across ${a.subMarkets.length} markets`,
+          mapDiffA: seededNumber(a.teamA, -2, 3),
+        },
+        mapOrDraftContext: {
+          edgeTeam: oddsA < oddsB - 0.15 ? 'A' : oddsB < oddsA - 0.15 ? 'B' : 'Even',
+          keyMapsOrHeroes: KEY_MAPS_BY_GAME[a.game].slice(0, 4),
+          statHighlight: `Polymarket implies ${Math.round((1 / oddsA) * 100)}% ${a.teamA} vs ${Math.round((1 / oddsB) * 100)}% ${a.teamB} (${a.priceChange24h >= 0 ? '+' : ''}${(a.priceChange24h * 100).toFixed(1)}% 24h Δ)`,
+        },
+        narrativeNotes: [
+          a.reasonSummary,
+          `Real-time Polymarket order-book liquidity: $${Math.round(a.liquidity).toLocaleString()}`,
+        ],
+      });
+    }
   }
 
-  const curated = getCuratedDailyMatches();
-  sourcesUsed.push('H2H Curated Feed');
+  // 2. Real BO3.gg CS2 live/upcoming matches (deduplicated against Polymarket)
+  if (bo3Matches.length > 0) {
+    sourcesUsed.push('BO3.gg Live API');
+    for (const m of bo3Matches) {
+      const pairKey = `${m.game}-${[normalizeTeamKey(m.teamA.name), normalizeTeamKey(m.teamB.name)].sort().join('-')}`;
+      if (!matchMap.has(pairKey)) {
+        matchMap.set(pairKey, m);
+      } else if (m.status === 'live') {
+        // Upgrade Polymarket match status to live if BO3 confirms it is live
+        const existing = matchMap.get(pairKey)!;
+        existing.status = 'live';
+      }
+    }
+  }
 
-  // Merge live Polymarket + OpenDota matches with curated multi-game slate
-  const combined = [...polymarketMatches, ...openDotaMatches, ...curated];
+  // 3. Real OpenDota live matches
+  if (openDotaMatches.length > 0) {
+    sourcesUsed.push('OpenDota Live API');
+    for (const m of openDotaMatches) {
+      const pairKey = `${m.game}-${[normalizeTeamKey(m.teamA.name), normalizeTeamKey(m.teamB.name)].sort().join('-')}`;
+      if (!matchMap.has(pairKey)) {
+        matchMap.set(pairKey, m);
+      }
+    }
+  }
 
-  // Sort: live first, then soonest startTimeIso
+  // 4. Real LoL Esports official schedule
+  if (lolMatches.length > 0) {
+    sourcesUsed.push('LoL Esports API');
+    for (const m of lolMatches) {
+      const pairKey = `${m.game}-${[normalizeTeamKey(m.teamA.name), normalizeTeamKey(m.teamB.name)].sort().join('-')}`;
+      if (!matchMap.has(pairKey)) {
+        matchMap.set(pairKey, m);
+      }
+    }
+  }
+
+  const combined = Array.from(matchMap.values());
+
+  // Sort: LIVE first, then highest 24h Polymarket volume / soonest upcoming time
   combined.sort((a, b) => {
     if (a.status !== b.status) return a.status === 'live' ? -1 : 1;
-    return new Date(a.startTimeIso).getTime() - new Date(b.startTimeIso).getTime();
+    const tA = new Date(a.startTimeIso).getTime();
+    const tB = new Date(b.startTimeIso).getTime();
+    return tA - tB;
   });
 
   return {

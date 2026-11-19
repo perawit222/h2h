@@ -297,12 +297,14 @@ function MatchCard({ match, onClick }: { match: EsportsMatch; onClick: () => voi
               </>
             )}
           </span>
-          <span className="inline-flex items-center gap-1 font-mono text-slate-500">
+          <span className="inline-flex items-center gap-1 font-mono text-emerald-300/90">
             <Radio className="h-3 w-3" /> {match.source}
           </span>
-          <span className="hidden sm:inline text-slate-500">
-            H2H: {match.h2h.teamAWins}–{match.h2h.teamBWins}
-          </span>
+          {typeof match.volume24h === 'number' && match.volume24h > 0 && (
+            <span className="hidden sm:inline font-mono text-[#72e4c2]">
+              24h Vol: ${Math.round(match.volume24h).toLocaleString()}
+            </span>
+          )}
         </div>
 
         <span className="inline-flex items-center gap-1 font-medium text-sky-400 group-hover:text-sky-300 transition-colors">
