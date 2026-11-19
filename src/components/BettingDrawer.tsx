@@ -27,6 +27,7 @@ import {
   YAxis,
 } from 'recharts';
 import { EsportsMatch, MatchAnalysis, PillarDetail, RiskLevel } from '@/types/esports';
+import { runDeterministicAnalysis } from '@/lib/analyzer';
 
 interface BettingDrawerProps {
   match: EsportsMatch | null;
@@ -89,14 +90,17 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
       body: JSON.stringify({ match }),
     })
       .then(async (res) => {
-        if (!res.ok) throw new Error('Analysis request failed');
+        if (!res.ok) throw new Error('Static mode fallback');
         return (await res.json()) as MatchAnalysis;
       })
       .then((result) => {
         if (!cancelled) setAnalysis(result);
       })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Unable to analyze match');
+      .catch(() => {
+        // On GitHub Pages static export, run deterministic quant analyzer directly in-browser
+        if (!cancelled) {
+          setAnalysis(runDeterministicAnalysis(match));
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

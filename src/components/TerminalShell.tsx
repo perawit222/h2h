@@ -34,14 +34,14 @@ export function TerminalShell({ initialRadar, initialSchedule }: TerminalShellPr
         fetch('/api/radar', { cache: 'no-store' }),
         fetch('/api/schedule', { cache: 'no-store' }),
       ]);
-      if (radarRes.ok) {
+      if (radarRes.ok && schedRes.ok) {
         setRadarData(await radarRes.json());
-      }
-      if (schedRes.ok) {
         setScheduleData(await schedRes.json());
+      } else {
+        window.location.reload();
       }
-    } catch (err) {
-      console.error('Refresh error:', err);
+    } catch {
+      window.location.reload();
     } finally {
       setIsRefreshing(false);
     }
