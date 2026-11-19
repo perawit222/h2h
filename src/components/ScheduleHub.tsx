@@ -175,6 +175,9 @@ export function ScheduleHub({ data, isLoading, onSelectMatch }: ScheduleHubProps
 
 function MatchCard({ match, onClick }: { match: EsportsMatch; onClick: () => void }) {
   const isLive = match.status === 'live';
+  const markets = match.markets || [];
+  const hcpMarket = markets.find((m) => /handicap/i.test(m.question));
+  const ouMarket = markets.find((m) => /o\/u|over\/under|total/i.test(m.question));
 
   return (
     <button
@@ -282,6 +285,28 @@ function MatchCard({ match, onClick }: { match: EsportsMatch; onClick: () => voi
           </div>
         </div>
       </div>
+
+      {/* Extra Markets Strip (Handicap & Over/Under preview) */}
+      {(hcpMarket || ouMarket) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono">
+          {hcpMarket && (
+            <div className="flex items-center justify-between rounded-md border border-slate-800/90 bg-slate-950/70 px-2.5 py-1.5">
+              <span className="text-slate-400 truncate pr-2">HCP · {hcpMarket.teamA}</span>
+              <span className="text-amber-300 font-semibold shrink-0">
+                {hcpMarket.oddsA.toFixed(2)}x / {hcpMarket.oddsB.toFixed(2)}x
+              </span>
+            </div>
+          )}
+          {ouMarket && (
+            <div className="flex items-center justify-between rounded-md border border-slate-800/90 bg-slate-950/70 px-2.5 py-1.5">
+              <span className="text-slate-400 truncate pr-2">{ouMarket.question.replace('Games Total: ', 'Total ')}</span>
+              <span className="text-sky-300 font-semibold shrink-0">
+                O {ouMarket.oddsA.toFixed(2)}x · U {ouMarket.oddsB.toFixed(2)}x
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Footer Row */}
       <div className="flex items-center justify-between pt-1 border-t border-slate-800/70 text-[11px]">

@@ -113,6 +113,8 @@ export interface EsportsMatch {
   source: 'Polymarket Live' | 'BO3.gg Live' | 'OpenDota Live' | 'LoL Esports API';
   polymarketUrl?: string;
   volume24h?: number;
+  liquidity?: number;
+  markets?: SubMarketSnapshot[];
   teamA: TeamSnapshot;
   teamB: TeamSnapshot;
   h2h: {
@@ -143,15 +145,28 @@ export interface PillarDetail {
   bullets: string[];
 }
 
+export interface RecommendedMarketAngle {
+  category: string;
+  question: string;
+  selection: string;
+  oddsDecimal: number;
+  edgeNote: string;
+}
+
 export interface MatchAnalysis {
   matchId: string;
   engine: 'gemini' | 'deterministic';
-  interestScore: number;
+  interestScore: number; // 1 (Extremely Risky / Avoid) to 10 (High Conviction / Best to Invest)
+  investabilityLabel: string;
   estimatedEdgePct: number;
   riskLevel: RiskLevel;
   recommendedSide: string;
   fairOddsDecimal: number;
   marketOddsDecimal: number;
+  maxSafeStakeUsd: number;
+  recommendedUnits: string;
+  liquidityTier: 'Deep' | 'Moderate' | 'Thin' | 'Unpriced';
+  recommendedMarket: RecommendedMarketAngle;
   verdictHeadline: string;
   narrativeTags: string[];
   pillars: {

@@ -1,4 +1,11 @@
-import { EsportsMatch, GameTitle, MatchFormat, ScheduleResponse, TeamSnapshot } from '@/types/esports';
+import {
+  EsportsMatch,
+  GameTitle,
+  MatchFormat,
+  ScheduleResponse,
+  SubMarketSnapshot,
+  TeamSnapshot,
+} from '@/types/esports';
 import { fetchPolymarketEsportsRadar } from './polymarket';
 
 interface Bo3MatchRaw {
@@ -100,6 +107,83 @@ const KEY_MAPS_BY_GAME: Record<GameTitle, string[]> = {
   'Dota 2': ['Shadow Fiend', 'Tiny', 'Puck', 'Centaur', 'Morphling'],
 };
 
+function buildReferenceSubMarkets(
+  idPrefix: string,
+  teamA: string,
+  teamB: string,
+  probA: number,
+  format: MatchFormat
+): SubMarketSnapshot[] {
+  const pA = Math.max(0.15, Math.min(0.85, probA));
+  const pB = 1 - pA;
+  const markets: SubMarketSnapshot[] = [
+    {
+      id: `${idPrefix}-ml`,
+      question: `Match Winner (${format}): ${teamA} vs ${teamB}`,
+      category: 'Match Winner',
+      teamA,
+      teamB,
+      probA: pA,
+      probB: pB,
+      oddsA: Number((1 / pA).toFixed(2)),
+      oddsB: Number((1 / pB).toFixed(2)),
+      volume24h: 0,
+      totalVolume: 0,
+      liquidity: 0,
+      priceChange24h: 0,
+      priceChange1h: 0,
+    },
+  ];
+
+  if (format !== 'Bo1') {
+    const favIsA = pA >= pB;
+    const favProb = Math.max(pA, pB);
+    // Estimate 2-0 / -1.5 handicap probability from Bo3 moneyline
+    const hcpProb = Math.max(0.18, Math.min(0.68, Number((favProb * favProb * 0.92).toFixed(3))));
+    const favName = favIsA ? teamA : teamB;
+    const dogName = favIsA ? teamB : teamA;
+    markets.push({
+      id: `${idPrefix}-hcp`,
+      question: `Map Handicap: ${favName} (-1.5) vs ${dogName} (+1.5)`,
+      category: 'Handicap / Total',
+      teamA: `${favName} (-1.5)`,
+      teamB: `${dogName} (+1.5)`,
+      probA: hcpProb,
+      probB: Number((1 - hcpProb).toFixed(3)),
+      oddsA: Number((1 / hcpProb).toFixed(2)),
+      oddsB: Number((1 / (1 - hcpProb)).toFixed(2)),
+      volume24h: 0,
+      totalVolume: 0,
+      liquidity: 0,
+      priceChange24h: 0,
+      priceChange1h: 0,
+    });
+
+    // Estimate Over 2.5 Maps (or 3.5 for Bo5) probability: closer matches go Over more often
+    const closeness = 1 - Math.abs(pA - pB) * 2; // 0 to 1
+    const overProb = Math.max(0.28, Math.min(0.62, Number((0.34 + closeness * 0.24).toFixed(3))));
+    const line = format === 'Bo5' ? '3.5' : '2.5';
+    markets.push({
+      id: `${idPrefix}-ou`,
+      question: `Games Total: O/U ${line}`,
+      category: 'Handicap / Total',
+      teamA: `Over ${line}`,
+      teamB: `Under ${line}`,
+      probA: overProb,
+      probB: Number((1 - overProb).toFixed(3)),
+      oddsA: Number((1 / overProb).toFixed(2)),
+      oddsB: Number((1 / (1 - overProb)).toFixed(2)),
+      volume24h: 0,
+      totalVolume: 0,
+      liquidity: 0,
+      priceChange24h: 0,
+      priceChange1h: 0,
+    });
+  }
+
+  return markets;
+}
+
 async function fetchBo3Cs2Matches(): Promise<EsportsMatch[]> {
   try {
     const res = await fetch(
@@ -148,6 +232,7 @@ async function fetchBo3Cs2Matches(): Promise<EsportsMatch[]> {
         status,
         startTimeIso: m.start_date || new Date().toISOString(),
         source: 'BO3.gg Live',
+        markets: buildReferenceSubMarkets(`bo3-${m.id}`, t1, t2, probA, format),
         teamA: buildTeamSnapshot(t1, 'CS2', oddsA, m.team1?.rank),
         teamB: buildTeamSnapshot(t2, 'CS2', oddsB, m.team2?.rank),
         h2h: {
@@ -205,6 +290,7 @@ async function fetchOpenDotaLive(): Promise<EsportsMatch[]> {
         status: 'live',
         startTimeIso: new Date().toISOString(),
         source: 'OpenDota Live',
+        markets: buildReferenceSubMarkets(`od-${g.match_id || t1}`, t1, t2, 1 / oddsA, 'Bo3'),
         teamA: buildTeamSnapshot(t1, 'Dota 2', oddsA),
         teamB: buildTeamSnapshot(t2, 'Dota 2', oddsB),
         h2h: {
@@ -273,6 +359,7 @@ async function fetchLoLEsportsSchedule(): Promise<EsportsMatch[]> {
         status,
         startTimeIso: e.startTime || new Date().toISOString(),
         source: 'LoL Esports API',
+        markets: buildReferenceSubMarkets(`lol-${e.match?.id || idx}`, t1, t2, probA, format),
         teamA: buildTeamSnapshot(t1, 'LoL', oddsA),
         teamB: buildTeamSnapshot(t2, 'LoL', oddsB),
         h2h: {
@@ -341,6 +428,8 @@ export async function fetchDailySchedule(): Promise<ScheduleResponse> {
         source: 'Polymarket Live',
         polymarketUrl: a.polymarketUrl,
         volume24h: a.volume24h,
+        liquidity: a.liquidity,
+        markets: a.subMarkets,
         teamA: buildTeamSnapshot(a.teamA, a.game, oddsA),
         teamB: buildTeamSnapshot(a.teamB, a.game, oddsB),
         h2h: {
