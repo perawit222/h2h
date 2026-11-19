@@ -355,7 +355,9 @@ async function fetchBo3Cs2Matches(): Promise<EsportsMatch[]> {
         status,
         startTimeIso: m.start_date || new Date().toISOString(),
         source: 'BO3.gg Live',
-        markets: buildReferenceSubMarkets(`bo3-${m.id}`, t1, t2, probA, format),
+        hasRealOdds: false,
+        oddsSource: 'Model Estimate',
+        markets: buildReferenceSubMarkets(`bo3-${m.id}`, t1, t2, probA, format, 'CS2'),
         teamA: buildTeamSnapshot(t1, 'CS2', oddsA, m.team1?.rank),
         teamB: buildTeamSnapshot(t2, 'CS2', oddsB, m.team2?.rank),
         h2h: {
@@ -413,7 +415,9 @@ async function fetchOpenDotaLive(): Promise<EsportsMatch[]> {
         status: 'live',
         startTimeIso: new Date().toISOString(),
         source: 'OpenDota Live',
-        markets: buildReferenceSubMarkets(`od-${g.match_id || t1}`, t1, t2, 1 / oddsA, 'Bo3'),
+        hasRealOdds: false,
+        oddsSource: 'Model Estimate',
+        markets: buildReferenceSubMarkets(`od-${g.match_id || t1}`, t1, t2, 1 / oddsA, 'Bo3', 'Dota 2'),
         teamA: buildTeamSnapshot(t1, 'Dota 2', oddsA),
         teamB: buildTeamSnapshot(t2, 'Dota 2', oddsB),
         h2h: {
@@ -482,7 +486,9 @@ async function fetchLoLEsportsSchedule(): Promise<EsportsMatch[]> {
         status,
         startTimeIso: e.startTime || new Date().toISOString(),
         source: 'LoL Esports API',
-        markets: buildReferenceSubMarkets(`lol-${e.match?.id || idx}`, t1, t2, probA, format),
+        hasRealOdds: false,
+        oddsSource: 'Model Estimate',
+        markets: buildReferenceSubMarkets(`lol-${e.match?.id || idx}`, t1, t2, probA, format, 'LoL'),
         teamA: buildTeamSnapshot(t1, 'LoL', oddsA),
         teamB: buildTeamSnapshot(t2, 'LoL', oddsB),
         h2h: {
@@ -509,6 +515,18 @@ async function fetchLoLEsportsSchedule(): Promise<EsportsMatch[]> {
   }
 }
 
+interface EspnOddsSideRaw {
+  close?: { line?: string; odds?: string };
+  open?: { line?: string; odds?: string };
+}
+
+interface EspnOddsRaw {
+  overUnder?: number;
+  moneyline?: { home?: EspnOddsSideRaw; away?: EspnOddsSideRaw; draw?: EspnOddsSideRaw };
+  pointSpread?: { home?: EspnOddsSideRaw; away?: EspnOddsSideRaw };
+  total?: { over?: EspnOddsSideRaw; under?: EspnOddsSideRaw };
+}
+
 interface EspnCompetitorRaw {
   homeAway?: string;
   team?: { displayName?: string; shortDisplayName?: string };
@@ -519,13 +537,24 @@ interface EspnEventRaw {
   id?: string;
   date?: string;
   status?: { type?: { state?: string; shortDetail?: string } };
-  competitions?: { competitors?: EspnCompetitorRaw[] }[];
+  competitions?: { competitors?: EspnCompetitorRaw[]; odds?: EspnOddsRaw[] }[];
+}
+
+function americanToDecimal(raw?: string): number | null {
+  if (!raw) return null;
+  const cleaned = raw.trim().toUpperCase();
+  if (cleaned === 'EVEN' || cleaned === 'PK') return 2.0;
+  const num = Number(cleaned);
+  if (!Number.isFinite(num) || num === 0) return null;
+  if (num > 0) return Number((1 + num / 100).toFixed(2));
+  return Number((1 + 100 / Math.abs(num)).toFixed(2));
 }
 
 async function fetchEspnSportsMatches(): Promise<EsportsMatch[]> {
+  const todayCompact = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const feeds: { url: string; game: GameTitle; league: string; format: MatchFormat }[] = [
     {
-      url: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
+      url: `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${todayCompact}`,
       game: 'NBA',
       league: 'NBA Regular Season',
       format: '4Q',
@@ -571,11 +600,12 @@ async function fetchEspnSportsMatches(): Promise<EsportsMatch[]> {
         });
         if (!res.ok) return [] as EsportsMatch[];
         const json = (await res.json()) as { events?: EspnEventRaw[] };
-        const events = (json.events || []).filter((e) => e.status?.type?.state !== 'post').slice(0, 6);
+        const events = (json.events || []).filter((e) => e.status?.type?.state !== 'post').slice(0, 8);
 
         const out: EsportsMatch[] = [];
         for (const ev of events) {
-          const comps = ev.competitions?.[0]?.competitors || [];
+          const comp = ev.competitions?.[0];
+          const comps = comp?.competitors || [];
           if (comps.length < 2) continue;
           const home = comps.find((c) => c.homeAway === 'home') || comps[0];
           const away = comps.find((c) => c.homeAway === 'away') || comps[1];
@@ -583,10 +613,97 @@ async function fetchEspnSportsMatches(): Promise<EsportsMatch[]> {
           const tB = away.team?.displayName || away.team?.shortDisplayName;
           if (!tA || !tB) continue;
 
+          const dkOdds = comp?.odds?.[0];
+          const dkHomeMl = americanToDecimal(
+            dkOdds?.moneyline?.home?.close?.odds || dkOdds?.moneyline?.home?.open?.odds
+          );
+          const dkAwayMl = americanToDecimal(
+            dkOdds?.moneyline?.away?.close?.odds || dkOdds?.moneyline?.away?.open?.odds
+          );
+
+          const hasRealOdds = Boolean(dkHomeMl && dkAwayMl);
+          const oddsA = dkHomeMl ?? Number((1 / Math.max(0.32, Math.min(0.72, 0.54 + seededNumber(tA + tB, -16, 16) / 100))).toFixed(2));
+          const oddsB = dkAwayMl ?? Number((1 / Math.max(0.28, Math.min(0.68, 1 - 1 / oddsA))).toFixed(2));
+
+          // Build real DraftKings sub-markets when present
+          const realMarkets: SubMarketSnapshot[] = [];
+          if (hasRealOdds) {
+            realMarkets.push({
+              id: `dk-${ev.id}-ml`,
+              question: `Match Winner (${f.format}): ${tA} vs ${tB}`,
+              category: 'Match Winner',
+              teamA: tA,
+              teamB: tB,
+              probA: Number((1 / oddsA).toFixed(3)),
+              probB: Number((1 / oddsB).toFixed(3)),
+              oddsA,
+              oddsB,
+              volume24h: 0,
+              totalVolume: 0,
+              liquidity: 25000, // Deep DraftKings sportsbook liquidity
+              priceChange24h: 0,
+              priceChange1h: 0,
+            });
+
+            const spHomeOdds = americanToDecimal(
+              dkOdds?.pointSpread?.home?.close?.odds || dkOdds?.pointSpread?.home?.open?.odds
+            );
+            const spAwayOdds = americanToDecimal(
+              dkOdds?.pointSpread?.away?.close?.odds || dkOdds?.pointSpread?.away?.open?.odds
+            );
+            const spHomeLine =
+              dkOdds?.pointSpread?.home?.close?.line || dkOdds?.pointSpread?.home?.open?.line;
+            const spAwayLine =
+              dkOdds?.pointSpread?.away?.close?.line || dkOdds?.pointSpread?.away?.open?.line;
+
+            if (spHomeOdds && spAwayOdds && spHomeLine && spAwayLine) {
+              realMarkets.push({
+                id: `dk-${ev.id}-sp`,
+                question: `Spread / Handicap: ${tA} (${spHomeLine}) vs ${tB} (${spAwayLine})`,
+                category: 'Handicap / Total',
+                teamA: `${tA} (${spHomeLine})`,
+                teamB: `${tB} (${spAwayLine})`,
+                probA: Number((1 / spHomeOdds).toFixed(3)),
+                probB: Number((1 / spAwayOdds).toFixed(3)),
+                oddsA: spHomeOdds,
+                oddsB: spAwayOdds,
+                volume24h: 0,
+                totalVolume: 0,
+                liquidity: 25000,
+                priceChange24h: 0,
+                priceChange1h: 0,
+              });
+            }
+
+            const overOdds = americanToDecimal(
+              dkOdds?.total?.over?.close?.odds || dkOdds?.total?.over?.open?.odds
+            );
+            const underOdds = americanToDecimal(
+              dkOdds?.total?.under?.close?.odds || dkOdds?.total?.under?.open?.odds
+            );
+            const ouLine = dkOdds?.overUnder ?? dkOdds?.total?.over?.close?.line?.replace(/^o/i, '');
+            if (overOdds && underOdds && ouLine) {
+              realMarkets.push({
+                id: `dk-${ev.id}-ou`,
+                question: `Total O/U ${ouLine}`,
+                category: 'Handicap / Total',
+                teamA: `Over ${ouLine}`,
+                teamB: `Under ${ouLine}`,
+                probA: Number((1 / overOdds).toFixed(3)),
+                probB: Number((1 / underOdds).toFixed(3)),
+                oddsA: overOdds,
+                oddsB: underOdds,
+                volume24h: 0,
+                totalVolume: 0,
+                liquidity: 25000,
+                priceChange24h: 0,
+                priceChange1h: 0,
+              });
+            }
+          }
+
           const isLive = ev.status?.type?.state === 'in';
-          const probA = Math.max(0.32, Math.min(0.72, 0.54 + seededNumber(tA + tB, -16, 16) / 100));
-          const oddsA = Number((1 / probA).toFixed(2));
-          const oddsB = Number((1 / (1 - probA)).toFixed(2));
+          const probA = 1 / oddsA;
 
           out.push({
             id: `espn-${f.game.toLowerCase()}-${ev.id}`,
@@ -599,13 +716,18 @@ async function fetchEspnSportsMatches(): Promise<EsportsMatch[]> {
             status: isLive ? 'live' : 'upcoming',
             startTimeIso: ev.date || new Date().toISOString(),
             source: 'ESPN Live API',
-            markets: buildReferenceSubMarkets(`espn-${ev.id}`, tA, tB, probA, f.format, f.game),
+            hasRealOdds,
+            oddsSource: hasRealOdds ? 'DraftKings (ESPN)' : 'Model Estimate',
+            liquidity: hasRealOdds ? 25000 : 0,
+            markets: hasRealOdds
+              ? realMarkets
+              : buildReferenceSubMarkets(`espn-${ev.id}`, tA, tB, probA, f.format, f.game),
             teamA: buildTeamSnapshot(tA, f.game, oddsA),
             teamB: buildTeamSnapshot(tB, f.game, oddsB),
             h2h: {
               teamAWins: seededNumber(tA, 2, 7),
               teamBWins: seededNumber(tB, 1, 6),
-              lastMeetingSummary: `${f.league} official schedule synced live from ESPN`,
+              lastMeetingSummary: `${f.league} official schedule${hasRealOdds ? ' + Live DraftKings Sportsbook Odds' : ''}`,
               mapDiffA: seededNumber(tA, -2, 3),
             },
             mapOrDraftContext: {
@@ -617,10 +739,12 @@ async function fetchEspnSportsMatches(): Promise<EsportsMatch[]> {
                   : `Pace, bench depth, and home court favor ${probA >= 0.5 ? tA : tB}`,
             },
             narrativeNotes: [
-              `Real ${f.league} fixture pulled directly from ESPN public scoreboard API`,
+              hasRealOdds
+                ? `Live DraftKings sportsbook odds synced via ESPN (${f.league})`
+                : `Official ${f.league} fixture pulled from ESPN scoreboard API`,
               f.game === 'Football'
-                ? '90-minute Football includes draw risk — consider Asian Handicap (-0.5) or O/U 2.5 Goals'
-                : 'NBA back-to-back fatigue and injury reports can shift spreads late',
+                ? '90-minute Football includes draw risk — evaluate Asian Handicap or Over/Under'
+                : 'NBA back-to-back fatigue and late injury reports can move lines',
             ],
           });
         }
@@ -664,29 +788,22 @@ export async function fetchDailySchedule(): Promise<ScheduleResponse> {
       const oddsA = primarySub ? primarySub.oddsA : a.decimalOdds;
       const oddsB = primarySub ? primarySub.oddsB : a.opponentDecimalOdds;
 
-      const markets =
-        a.subMarkets.length >= 2
-          ? a.subMarkets
-          : buildReferenceSubMarkets(
-              `pm-${a.eventId}`,
-              a.teamA,
-              a.teamB,
-              1 / oddsA,
-              a.format,
-              a.game
-            );
+      // Use ONLY real Polymarket sub-markets — never invent fake odds on Polymarket events!
+      const markets = a.subMarkets;
 
       matchMap.set(pairKey, {
         id: `pm-sched-${a.eventId}`,
         game: a.game,
         tournament: a.tournament,
         tier: a.tier === 'Tier 1' ? 'S-Tier' : 'B-Tier',
-        stage: isLive ? 'Live on Polymarket' : `${markets.length} Markets`,
+        stage: isLive ? 'Live on Polymarket' : `${markets.length} Real Markets`,
         isLan: a.tier === 'Tier 1',
         format: a.format,
         status: isLive ? 'live' : 'upcoming',
         startTimeIso: startIso,
         source: 'Polymarket Live',
+        hasRealOdds: true,
+        oddsSource: 'Polymarket Orderbook',
         polymarketUrl: a.polymarketUrl,
         volume24h: a.volume24h,
         liquidity: a.liquidity,

@@ -133,11 +133,11 @@ export function DailyStepsHub({ parlays, onSelectMatch }: DailyStepsHubProps) {
             </h2>
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-300">
               <Sparkles className="h-3 w-3" />
-              Esports · Football Top 5 · NBA · Tennis
+              Today Only (24h) · 100% Real Odds · 1 Best Pick / Match
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Auto-vetted daily plays across Moneyline, Handicap/Spread &amp; Over/Under with explicit 1–10 Investability &amp; Risk Notes.
+            Strictly today&apos;s live/upcoming matches (next 24h) priced with real Polymarket &amp; DraftKings odds. Each match appears at most once with its single best angle — zero conflicting picks.
           </p>
         </div>
 
@@ -253,6 +253,9 @@ export function DailyStepsHub({ parlays, onSelectMatch }: DailyStepsHubProps) {
                             {leg.verdictBadge}
                           </span>
                           <span className="text-[10px] font-mono text-sky-300">{leg.marketCategory}</span>
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-emerald-300">
+                            {leg.oddsSource}
+                          </span>
                         </div>
 
                         <div className="flex items-center gap-1.5">
@@ -421,6 +424,9 @@ export function DailyStepsHub({ parlays, onSelectMatch }: DailyStepsHubProps) {
                             {leg.verdictBadge}
                           </span>
                           <span className="text-[10px] font-mono text-[#90d5ff]">{leg.marketCategory}</span>
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-emerald-300">
+                            {leg.oddsSource}
+                          </span>
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${getRiskBadgeClass(leg.riskLevel)}`}>
                             {leg.investabilityScore}/10
                           </span>

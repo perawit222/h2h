@@ -397,8 +397,12 @@ function MatchCard({ match, onClick }: { match: EsportsMatch; onClick: () => voi
               </>
             )}
           </span>
-          <span className="inline-flex items-center gap-1 font-mono text-emerald-300/90">
-            <Radio className="h-3 w-3" /> {match.source}
+          <span
+            className={`inline-flex items-center gap-1 font-mono ${
+              match.hasRealOdds ? 'text-emerald-300/90' : 'text-slate-500'
+            }`}
+          >
+            <Radio className="h-3 w-3" /> {match.oddsSource}
           </span>
           {typeof match.volume24h === 'number' && match.volume24h > 0 && (
             <span className="hidden sm:inline font-mono text-[#72e4c2]">

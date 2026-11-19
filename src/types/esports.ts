@@ -140,6 +140,7 @@ export interface ParlayLeg {
   marketCategory: string;
   selection: string;
   oddsDecimal: number;
+  oddsSource: string;
   trueWinProbPct: number;
   marketImpliedProbPct: number;
   modelWinProbPct: number;
@@ -186,6 +187,8 @@ export interface EsportsMatch {
   status: MatchStatus;
   startTimeIso: string;
   source: MatchSource;
+  hasRealOdds: boolean;
+  oddsSource: 'Polymarket Orderbook' | 'DraftKings (ESPN)' | 'Model Estimate';
   polymarketUrl?: string;
   volume24h?: number;
   liquidity?: number;
