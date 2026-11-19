@@ -1,91 +1,57 @@
-import { DailyParlayTier, EsportsMatch, ParlayLeg, RiskLevel } from '@/types/esports';
+import {
+  DailyParlayTier,
+  EsportsMatch,
+  ParlayLeg,
+  RiskLevel,
+  VerdictBadge,
+} from '@/types/esports';
 
 interface CandidateLeg extends ParlayLeg {
   liquidity: number;
-  matchScore: number;
+  isSeriesWinner: boolean;
 }
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-function buildLegRiskProfile(
-  match: EsportsMatch,
-  odds: number,
-  category: string,
-  modelProbPct: number
-): { investabilityScore: number; riskLevel: RiskLevel; riskNote: string } {
-  let riskPts = 20;
-  const warnings: string[] = [];
-
-  if (match.format === 'Bo1') {
-    riskPts += 28;
-    warnings.push('Bo1 single-map variance');
-  }
-  if (match.game === 'Football' && category === 'Match Winner') {
-    riskPts += 16;
-    warnings.push('90m Draw risk — AH or DNB safer');
-  }
-  if (match.tier === 'B-Tier') {
-    riskPts += 16;
-    warnings.push('Lower-tier T2/T3 volatility');
-  }
-  if ((match.liquidity ?? 0) > 0 && (match.liquidity ?? 0) < 5000) {
-    riskPts += 14;
-    warnings.push('Thin orderbook — keep stake small');
-  }
-  if (odds >= 2.15) {
-    riskPts += 18;
-    warnings.push('Underdog / high-variance price');
-  } else if (odds <= 1.35) {
-    riskPts -= 8;
-  }
-
-  const riskLevel: RiskLevel =
-    riskPts >= 70 ? 'Extreme' : riskPts >= 50 ? 'High' : riskPts >= 32 ? 'Medium' : 'Low';
-
-  const baseScore = match.quickScore?.interestScore ?? 6;
-  const adjusted = clamp(
-    Math.round(baseScore + (modelProbPct >= 68 ? 1 : 0) - (riskLevel === 'High' ? 1 : riskLevel === 'Extreme' ? 2 : 0)),
-    1,
-    10
-  );
-
-  const riskNote =
-    warnings.length > 0
-      ? warnings.slice(0, 2).join(' · ')
-      : match.liquidity && match.liquidity >= 20000
-        ? 'Low risk · Deep Polymarket liquidity & strong form'
-        : 'Balanced edge · Standard unit sizing recommended';
-
-  return { investabilityScore: adjusted, riskLevel, riskNote };
+function isEsports(game: EsportsMatch['game']): boolean {
+  return game === 'CS2' || game === 'Valorant' || game === 'LoL' || game === 'Dota 2';
 }
 
-function extractCandidateLegs(matches: EsportsMatch[]): CandidateLeg[] {
+/**
+ * Extracts Series-First, Anti-Trap, Anti-Fake-Value parlay candidate legs.
+ * Rules:
+ * - NEVER emits Map 1 / Map 2 single-map gambles.
+ * - Rejects TRAP MATCH / AVOID completely.
+ * - Excludes Bo1 from Safe & Medium Core tiers.
+ * - Uses 6-pillar True Series Win Probability vs Market Implied Odds.
+ */
+function extractSeriesFirstCandidates(matches: EsportsMatch[]): CandidateLeg[] {
   const candidates: CandidateLeg[] = [];
 
   for (const match of matches) {
-    const quick = match.quickScore;
-    const matchScore = quick?.interestScore ?? 5;
-    const baseEdge = quick?.estimatedEdgePct ?? 2.0;
-    const liq = match.liquidity ?? 0;
+    const qs = match.quickScore;
+    if (!qs) continue;
+
+    // Hard Rule: NEVER put a TRAP MATCH / AVOID into any step ticket
+    if (qs.verdictBadge === 'TRAP MATCH / AVOID') continue;
+
     const matchName = `${match.teamA.name} vs ${match.teamB.name}`;
-    const subs = match.markets || [];
+    const liq = match.liquidity ?? 0;
+    const esports = isEsports(match.game);
+    const seriesMarketLabel = esports ? `Series Winner (${match.format})` : `Match Winner (${match.format})`;
 
-    const addSide = (
-      selection: string,
-      odds: number,
-      impliedProb: number,
-      category: string,
-      rationale: string,
-      edgeBonus = 0
-    ) => {
-      if (!Number.isFinite(odds) || odds < 1.06 || odds > 4.5) return;
-      const edgePct = Number(Math.max(0.5, baseEdge + edgeBonus).toFixed(1));
-      const modelProb = clamp(impliedProb + edgePct / 100, 0.2, 0.94);
-      const modelWinProbPct = Math.round(modelProb * 100);
-      const risk = buildLegRiskProfile(match, odds, category, modelWinProbPct);
+    // 1. Primary Series Winner leg (only for the structurally favored/recommended side — no blind fake-value chasing!)
+    const recIsTeamA =
+      qs.recommendedSide === match.teamA.name ||
+      (qs.recommendedSide === 'NO BET (Skip)' && match.teamA.oddsDecimal <= match.teamB.oddsDecimal);
+    const primaryTeam = recIsTeamA ? match.teamA : match.teamB;
 
+    if (
+      qs.verdictBadge === 'STRONG SERIES LOCK' ||
+      qs.verdictBadge === 'VALUE SERIES PLAY'
+    ) {
       candidates.push({
         matchId: match.id,
         match,
@@ -93,60 +59,91 @@ function extractCandidateLegs(matches: EsportsMatch[]): CandidateLeg[] {
         matchName,
         tournament: match.tournament,
         startTimeIso: match.startTimeIso,
-        marketCategory: category,
-        selection,
-        oddsDecimal: Number(odds.toFixed(2)),
-        modelWinProbPct,
-        edgePct,
-        investabilityScore: risk.investabilityScore,
-        riskLevel: risk.riskLevel,
-        riskNote: risk.riskNote,
-        rationale,
+        format: match.format,
+        marketCategory: seriesMarketLabel,
+        selection: primaryTeam.name,
+        oddsDecimal: Number(primaryTeam.oddsDecimal.toFixed(2)),
+        trueWinProbPct: qs.trueWinProbPct,
+        marketImpliedProbPct: qs.marketImpliedProbPct,
+        modelWinProbPct: qs.trueWinProbPct,
+        edgePct: qs.estimatedEdgePct,
+        investabilityScore: qs.interestScore,
+        verdictBadge: qs.verdictBadge,
+        riskLevel: qs.riskLevel,
+        riskNote: qs.primaryInvalidationRisk,
+        whySeriesNote: qs.whySeriesOverSingleMap,
+        rationale: `${qs.verdictBadge}: True ${qs.trueWinProbPct}% vs Market ${qs.marketImpliedProbPct}%`,
         liquidity: liq,
-        matchScore,
+        isSeriesWinner: true,
       });
-    };
+    }
 
-    addSide(
-      match.teamA.name,
-      match.teamA.oddsDecimal,
-      match.teamA.impliedProb,
-      'Match Winner',
-      `${match.teamA.tag} (${match.teamA.winRateLast10}% L10) moneyline`,
-      match.teamA.oddsDecimal <= match.teamB.oddsDecimal ? 0.8 : 0.4
-    );
-
-    addSide(
-      match.teamB.name,
-      match.teamB.oddsDecimal,
-      match.teamB.impliedProb,
-      'Match Winner',
-      `${match.teamB.tag} (${match.teamB.winRateLast10}% L10) moneyline`,
-      match.teamB.oddsDecimal < match.teamA.oddsDecimal ? 0.8 : 0.4
-    );
-
+    // 2. Full-Series Handicap / Over-Under ONLY (STRICTLY exclude Map 1 / Map 2 Winner single-map gambles!)
+    const subs = match.markets || [];
     for (const s of subs) {
+      if (s.category === 'Map Winner') continue; // HARD BAN on single-map gambling!
       if (s.category === 'Match Winner') continue;
+      if (/map\s+[123]/i.test(s.question) || /game\s+[123]/i.test(s.question)) continue;
+
       const isHcp = /handicap|spread/i.test(s.question);
       const isOu = /o\/u|over\/under|total/i.test(s.question);
-      const label = isHcp ? 'Handicap / Spread' : isOu ? 'Over / Under' : 'Map / Set Winner';
+      if (!isHcp && !isOu) continue;
 
-      addSide(
-        s.teamA,
-        s.oddsA,
-        s.probA,
-        label,
-        `${s.question} — ${s.teamA} @ ${s.oddsA.toFixed(2)}x`,
-        isHcp && s.oddsA <= 1.35 ? 1.2 : 0.6
-      );
-      addSide(
-        s.teamB,
-        s.oddsB,
-        s.probB,
-        label,
-        `${s.question} — ${s.teamB} @ ${s.oddsB.toFixed(2)}x`,
-        isHcp && s.oddsB <= 1.35 ? 1.2 : 0.6
-      );
+      // Only allow +1.5 safety handicap cushions or well-aligned full-series lines
+      const checkSide = (sel: string, odds: number, prob: number) => {
+        if (!Number.isFinite(odds) || odds < 1.08 || odds > 3.6) return;
+        const isPlusCushion = /\+1\.5|\+0\.5/i.test(sel);
+        const isMinusSweep = /-1\.5/i.test(sel);
+
+        // Do not allow risky -1.5 sweeps unless team is a STRONG SERIES LOCK
+        if (isMinusSweep && qs.verdictBadge !== 'STRONG SERIES LOCK') return;
+
+        // Require non-skip verdict for handicap/totals unless it's a +1.5 cushion on a Bo3/Bo5
+        if (qs.verdictBadge === 'HIGH VARIANCE / SKIP' && !isPlusCushion) return;
+
+        const impliedPct = Math.round(prob * 100);
+        const truePct = clamp(
+          Math.round(impliedPct + Math.max(0.5, qs.estimatedEdgePct * 0.65)),
+          24,
+          93
+        );
+        const edge = Number((truePct - impliedPct).toFixed(1));
+        const verdict: VerdictBadge = isPlusCushion && truePct >= 70
+          ? 'STRONG SERIES LOCK'
+          : qs.verdictBadge;
+
+        candidates.push({
+          matchId: match.id,
+          match,
+          game: match.game,
+          matchName,
+          tournament: match.tournament,
+          startTimeIso: match.startTimeIso,
+          format: match.format,
+          marketCategory: isHcp ? `Series Handicap (${match.format})` : `Series Total O/U (${match.format})`,
+          selection: sel,
+          oddsDecimal: Number(odds.toFixed(2)),
+          trueWinProbPct: truePct,
+          marketImpliedProbPct: impliedPct,
+          modelWinProbPct: truePct,
+          edgePct: edge,
+          investabilityScore: clamp(
+            qs.interestScore + (isPlusCushion ? 1 : isMinusSweep ? -1 : 0),
+            1,
+            10
+          ),
+          verdictBadge: verdict,
+          riskLevel: isPlusCushion ? 'Low' : qs.riskLevel,
+          riskNote: qs.primaryInvalidationRisk,
+          whySeriesNote: qs.whySeriesOverSingleMap,
+          rationale: `${s.question} — True ${truePct}% vs Market ${impliedPct}%`,
+          liquidity: liq,
+          isSeriesWinner: false,
+        });
+      };
+
+      checkSide(s.teamA, s.oddsA, s.probA);
+      checkSide(s.teamB, s.oddsB, s.probB);
     }
   }
 
@@ -158,10 +155,12 @@ function pickUniqueMatchLegs(
   minOdds: number,
   maxOdds: number,
   maxLegs: number,
+  allowBo1: boolean,
   sortFn: (a: CandidateLeg, b: CandidateLeg) => number
 ): CandidateLeg[] {
   const filtered = pool
     .filter((c) => c.oddsDecimal >= minOdds && c.oddsDecimal <= maxOdds)
+    .filter((c) => (allowBo1 ? true : c.format !== 'Bo1'))
     .sort(sortFn);
 
   const picked: CandidateLeg[] = [];
@@ -187,7 +186,6 @@ function summarizeParlay(
   riskLevel: RiskLevel,
   recommendedUnits: string
 ): DailyParlayTier {
-  // For Tier 2 (Top 10 Vetted), compute combined multiplier on top 3 anchors by default (UI lets user toggle any of the 10!)
   const calcLegs = id === 'medium' ? legs.slice(0, 3) : legs;
 
   const combinedOdds =
@@ -197,7 +195,7 @@ function summarizeParlay(
 
   const combinedProb =
     calcLegs.length > 0
-      ? calcLegs.reduce((acc, l) => acc * (l.modelWinProbPct / 100), 1)
+      ? calcLegs.reduce((acc, l) => acc * (l.trueWinProbPct / 100), 1)
       : 0;
 
   const combinedWinProbPct = Math.round(combinedProb * 100);
@@ -219,10 +217,10 @@ function summarizeParlay(
 
   const baseScore =
     id === 'safe'
-      ? clamp(Math.round(7.0 + (combinedWinProbPct - 45) * 0.08), 6, 10)
+      ? clamp(Math.round(7.2 + (combinedWinProbPct - 45) * 0.08), 6, 10)
       : id === 'medium'
-        ? clamp(Math.round(6.2 + (combinedWinProbPct - 30) * 0.07 + expectedValuePct * 0.1), 5, 9)
-        : clamp(Math.round(3.8 + expectedValuePct * 0.16), 2, 7);
+        ? clamp(Math.round(6.5 + (combinedWinProbPct - 30) * 0.07 + expectedValuePct * 0.1), 5, 9)
+        : clamp(Math.round(4.0 + expectedValuePct * 0.16), 2, 7);
 
   return {
     id,
@@ -242,55 +240,69 @@ function summarizeParlay(
 }
 
 export function buildDailyParlays(matches: EsportsMatch[]): DailyParlayTier[] {
-  const candidates = extractCandidateLegs(matches);
+  const candidates = extractSeriesFirstCandidates(matches);
 
-  // 1. SAFE STEP (1.10x – 1.32x per leg, compounded for high safety)
+  // 1. SAFE STEP (1.10x – 1.34x · Series-First Only, No Bo1, No Single-Map, No Traps)
   let safeLegs = pickUniqueMatchLegs(
     candidates,
     1.08,
     1.34,
     3,
-    (a, b) => b.modelWinProbPct - a.modelWinProbPct || b.investabilityScore - a.investabilityScore
+    false,
+    (a, b) =>
+      (b.verdictBadge === 'STRONG SERIES LOCK' ? 12 : 0) -
+        (a.verdictBadge === 'STRONG SERIES LOCK' ? 12 : 0) +
+      (b.trueWinProbPct - a.trueWinProbPct) +
+      (b.isSeriesWinner ? 4 : 0) -
+      (a.isSeriesWinner ? 4 : 0)
   );
   if (safeLegs.length < 2) {
     safeLegs = pickUniqueMatchLegs(
       candidates,
       1.06,
-      1.42,
+      1.45,
       3,
-      (a, b) => b.modelWinProbPct - a.modelWinProbPct
+      false,
+      (a, b) => b.trueWinProbPct - a.trueWinProbPct
     );
   }
 
-  // 2. MEDIUM · TOP 10 VETTED DAILY PICKS (1.36x – 1.62x, prioritizing 1.40x–1.55x sweet spot)
+  // 2. MEDIUM · TOP 10 VETTED SERIES-FIRST CORE PICKS (1.35x – 1.62x, centered on 1.40–1.55x)
   const mediumSort = (a: CandidateLeg, b: CandidateLeg) => {
     const distA = Math.abs(a.oddsDecimal - 1.47);
     const distB = Math.abs(b.oddsDecimal - 1.47);
-    const scoreA = a.investabilityScore * 6 + a.modelWinProbPct - distA * 35;
-    const scoreB = b.investabilityScore * 6 + b.modelWinProbPct - distB * 35;
+    const lockBonusA = a.verdictBadge === 'STRONG SERIES LOCK' ? 15 : 6;
+    const lockBonusB = b.verdictBadge === 'STRONG SERIES LOCK' ? 15 : 6;
+    const seriesBonusA = a.isSeriesWinner ? 10 : 0;
+    const seriesBonusB = b.isSeriesWinner ? 10 : 0;
+    const scoreA = lockBonusA + seriesBonusA + a.investabilityScore * 5 + a.trueWinProbPct - distA * 32;
+    const scoreB = lockBonusB + seriesBonusB + b.investabilityScore * 5 + b.trueWinProbPct - distB * 32;
     return scoreB - scoreA;
   };
 
-  let mediumLegs = pickUniqueMatchLegs(candidates, 1.35, 1.62, 10, mediumSort);
+  let mediumLegs = pickUniqueMatchLegs(candidates, 1.35, 1.62, 10, false, mediumSort);
   if (mediumLegs.length < 10) {
-    // Expand slightly to 1.30–1.72 only if needed to fill up to 10 vetted picks
-    mediumLegs = pickUniqueMatchLegs(candidates, 1.3, 1.72, 10, mediumSort);
+    mediumLegs = pickUniqueMatchLegs(candidates, 1.28, 1.78, 10, false, mediumSort);
   }
 
-  // 3. WORTH-THE-RISK VALUE STEP (1.75x – 3.60x per leg, highest EV / asymmetric upside)
+  // 3. WORTH-THE-RISK VALUE SERIES STEP (1.75x – 3.50x · Genuine Structural +EV Only, No Fake Value)
   let valueLegs = pickUniqueMatchLegs(
-    candidates,
+    candidates.filter((c) => c.trueWinProbPct >= 44 && c.edgePct >= 1.5),
     1.75,
     3.6,
     3,
-    (a, b) => b.edgePct * b.oddsDecimal - a.edgePct * a.oddsDecimal
+    false,
+    (a, b) =>
+      (b.isSeriesWinner ? 8 : 0) - (a.isSeriesWinner ? 8 : 0) +
+      (b.edgePct * b.oddsDecimal - a.edgePct * a.oddsDecimal)
   );
   if (valueLegs.length < 2) {
     valueLegs = pickUniqueMatchLegs(
       candidates,
       1.6,
-      4.0,
+      3.8,
       3,
+      false,
       (a, b) => b.edgePct - a.edgePct
     );
   }
@@ -298,30 +310,30 @@ export function buildDailyParlays(matches: EsportsMatch[]): DailyParlayTier[] {
   return [
     summarizeParlay(
       'safe',
-      'Tier 1 · Safe Compounder',
-      'SAFE STEP',
+      'Tier 1 · Safe Series Compounder',
+      'SAFE SERIES STEP',
       '1.10x – 1.30x / leg',
-      'High-probability anchors & safety handicaps compounded for steady, low-variance returns.',
+      'Series-First (Bo3/Bo5) locks & +1.5 safety cushions only. Bo1 flukes, single-map gambles & trap favorites strictly excluded.',
       safeLegs,
       'Low',
       '2.0u – 3.0u'
     ),
     summarizeParlay(
       'medium',
-      'Tier 2 · Top 10 Vetted Core Picks',
+      'Tier 2 · Top 10 Vetted Series Core Picks',
       'TOP 10 CORE (1.40–1.55x)',
       '1.40x – 1.55x / leg',
-      '10 vetted daily picks across Esports, Football Top 5, NBA & Tennis — each graded 1–10 with explicit risk notes. Select any legs to build your step.',
+      '10 institutional-vetted Series-First picks (6-Pillar True Win % vs Market Odds). Zero Trap Matches, zero Map 1/2 gambles. Check legs to compound.',
       mediumLegs,
       'Medium',
       '1.0u – 1.5u'
     ),
     summarizeParlay(
       'value_risk',
-      'Tier 3 · High-Value Upside',
-      'WORTH THE RISK',
+      'Tier 3 · Worth-The-Risk Series Value',
+      'VALUE SERIES PLAY',
       '1.75x – 3.50x / leg',
-      'Mispriced underdogs, -1.5 handicaps & Over lines offering asymmetric +EV payout.',
+      'Only underdogs/lines with ≥44% True Series Win Prob and real structural depth — fake-value payout bait automatically rejected.',
       valueLegs,
       'High',
       '0.25u – 0.5u'

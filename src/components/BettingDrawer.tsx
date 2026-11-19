@@ -2,7 +2,9 @@
 
 import React, { useEffect, useState } from 'react';
 import {
+  AlertOctagon,
   Brain,
+  CheckCircle2,
   Cpu,
   DollarSign,
   ExternalLink,
@@ -10,7 +12,9 @@ import {
   Gauge,
   Layers,
   Map,
+  Scale,
   ShieldAlert,
+  ShieldCheck,
   Sparkles,
   Swords,
   Target,
@@ -26,8 +30,14 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { EsportsMatch, MatchAnalysis, PillarDetail, RiskLevel } from '@/types/esports';
-import { runDeterministicAnalysis } from '@/lib/analyzer';
+import {
+  EsportsMatch,
+  MatchAnalysis,
+  PillarDetail,
+  RiskLevel,
+  VerdictBadge,
+} from '@/types/esports';
+import { runDeterministicAnalysis } from '@/lib/aiAnalyzerService';
 
 interface BettingDrawerProps {
   match: EsportsMatch | null;
@@ -54,6 +64,35 @@ function getRiskStyles(risk: RiskLevel): string {
   }
 }
 
+function getVerdictTheme(verdict: VerdictBadge) {
+  switch (verdict) {
+    case 'STRONG SERIES LOCK':
+      return {
+        badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50',
+        border: 'border-emerald-500/40',
+        icon: <ShieldCheck className="h-4 w-4 text-emerald-400" />,
+      };
+    case 'VALUE SERIES PLAY':
+      return {
+        badge: 'bg-sky-500/20 text-sky-300 border-sky-400/50',
+        border: 'border-sky-500/40',
+        icon: <CheckCircle2 className="h-4 w-4 text-sky-400" />,
+      };
+    case 'HIGH VARIANCE / SKIP':
+      return {
+        badge: 'bg-amber-500/20 text-amber-300 border-amber-400/50',
+        border: 'border-amber-500/40',
+        icon: <ShieldAlert className="h-4 w-4 text-amber-400" />,
+      };
+    case 'TRAP MATCH / AVOID':
+      return {
+        badge: 'bg-rose-500/20 text-rose-300 border-rose-400/50',
+        border: 'border-rose-500/45',
+        icon: <AlertOctagon className="h-4 w-4 text-rose-400" />,
+      };
+  }
+}
+
 function getScoreTextColor(score: number): string {
   if (score >= 8) return 'text-emerald-400';
   if (score >= 6) return 'text-sky-400';
@@ -72,7 +111,6 @@ function getSegmentColor(seg: number, active: boolean): string {
 export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!match) {
@@ -82,7 +120,6 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
 
     let cancelled = false;
     setLoading(true);
-    setError(null);
 
     fetch('/api/analyze', {
       method: 'POST',
@@ -97,7 +134,6 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
         if (!cancelled) setAnalysis(result);
       })
       .catch(() => {
-        // On GitHub Pages static export, run deterministic quant analyzer directly in-browser
         if (!cancelled) {
           setAnalysis(runDeterministicAnalysis(match));
         }
@@ -115,14 +151,17 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
 
   const pillarChartData = analysis
     ? [
-        { name: 'Recent Form', score: analysis.pillars.recentForm.score, color: '#10b981' },
-        { name: 'H2H Record', score: analysis.pillars.headToHead.score, color: '#38bdf8' },
-        { name: 'Map / Draft', score: analysis.pillars.statsAndDraft.score, color: '#a855f7' },
-        { name: 'Narratives', score: analysis.pillars.narrativesAndCurses.score, color: '#f59e0b' },
+        { name: '1. SoS & Form', score: analysis.pillars.sosAndTrueForm.score, color: '#10b981' },
+        { name: '2. Series Depth', score: analysis.pillars.seriesDepth.score, color: '#38bdf8' },
+        { name: '3. Style & H2H', score: analysis.pillars.stylisticH2H.score, color: '#a855f7' },
+        { name: '4. Stakes/Ctx', score: analysis.pillars.stakesAndContext.score, color: '#f59e0b' },
+        { name: '5. Narratives', score: analysis.pillars.narrativesAndCurses.score, color: '#fb7185' },
+        { name: '6. Odds Check', score: analysis.pillars.oddsSanityCheck.score, color: '#34d399' },
       ]
     : [];
 
   const availableMarkets = match.markets || [];
+  const verdictTheme = analysis ? getVerdictTheme(analysis.verdictBadge) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -151,11 +190,11 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
                 >
                   {analysis.engine === 'gemini' ? (
                     <>
-                      <Sparkles className="h-3 w-3" /> Gemini AI Engine
+                      <Sparkles className="h-3 w-3" /> Gemini Series-First AI
                     </>
                   ) : (
                     <>
-                      <Cpu className="h-3 w-3" /> Quant Engine
+                      <Cpu className="h-3 w-3" /> 6-Pillar Quant Engine
                     </>
                   )}
                 </span>
@@ -190,25 +229,23 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
 
         {/* Body */}
         <div className="p-6 space-y-5">
-          {loading ? (
+          {loading || !analysis || !verdictTheme ? (
             <div className="space-y-4">
               <div className="h-36 rounded-xl bg-slate-900/80 border border-slate-800 animate-pulse" />
               <div className="h-44 rounded-xl bg-slate-900/80 border border-slate-800 animate-pulse" />
               <div className="h-44 rounded-xl bg-slate-900/80 border border-slate-800 animate-pulse" />
             </div>
-          ) : error ? (
-            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
-              {error}
-            </div>
-          ) : analysis ? (
+          ) : (
             <>
-              {/* 1–10 Investability & Risk Meter */}
-              <div className="rounded-xl border border-[#263750] bg-[#111c2d] p-5 space-y-4">
+              {/* 1. VERDICT BADGE + MARKET RECOMMENDATION CARD */}
+              <div className={`rounded-xl border ${verdictTheme.border} bg-[#111c2d] p-5 space-y-4`}>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#90d5ff]">
-                    <Gauge className="h-4 w-4 text-[#5ce6b6]" />
-                    Investability &amp; Risk Rating (1 = Risky · 10 = Best to Invest)
-                  </div>
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold tracking-wide ${verdictTheme.badge}`}
+                  >
+                    {verdictTheme.icon}
+                    {analysis.verdictBadge}
+                  </span>
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${getRiskStyles(
                       analysis.riskLevel
@@ -218,35 +255,132 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
                   </span>
                 </div>
 
-                {/* Big 1-10 Score + 10-Segment Visual Scale */}
-                <div className="space-y-2">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <div className="flex items-baseline gap-2">
-                      <span
-                        className={`text-3xl font-bold font-mono tabular-nums ${getScoreTextColor(
-                          analysis.interestScore
-                        )}`}
-                      >
-                        {analysis.interestScore}
-                        <span className="text-sm font-normal text-slate-500">/10</span>
-                      </span>
-                      <span className="text-xs font-semibold text-slate-200">
-                        {analysis.investabilityLabel}
-                      </span>
+                {/* Explicit Market Recommendation */}
+                <div className="rounded-lg border border-[#263750] bg-[#0c1523] p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                      Institutional Action
                     </div>
-                    <span className="text-xs font-mono text-emerald-400 font-semibold">
-                      Est. Edge: +{analysis.estimatedEdgePct.toFixed(1)}%
+                    <div className="text-sm font-bold text-white flex items-center gap-1.5 mt-0.5">
+                      <Target className="h-4 w-4 text-[#5ce6b6]" />
+                      {analysis.marketRecommendation}
+                    </div>
+                  </div>
+                  <div className="text-left sm:text-right font-mono">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                      Selection &amp; Price
+                    </div>
+                    <div className="text-sm font-bold text-[#eac382]">
+                      {analysis.recommendedSide}
+                      {analysis.recommendedSide !== 'NO BET (Skip)' &&
+                        ` @ ${analysis.marketOddsDecimal.toFixed(2)}x`}
+                    </div>
+                  </div>
+                </div>
+
+                {/* True Win Probability vs. Market Implied Odds Comparison Bar */}
+                <div className="rounded-lg border border-[#263750] bg-[#0c1523] p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                      <Scale className="h-3.5 w-3.5 text-[#4bb5f7]" />
+                      True Series Win Prob vs. Market Implied
+                    </span>
+                    <span
+                      className={`font-mono font-bold ${
+                        analysis.estimatedEdgePct >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                      }`}
+                    >
+                      Edge: {analysis.estimatedEdgePct >= 0 ? '+' : ''}
+                      {analysis.estimatedEdgePct.toFixed(1)}%
                     </span>
                   </div>
 
-                  {/* 10-Segment Gauge */}
+                  {/* True Prob Bar */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[11px] font-mono">
+                      <span className="text-emerald-300">
+                        Model True Series Prob (Pillars 1–5)
+                      </span>
+                      <span className="font-bold text-emerald-300">
+                        {analysis.trueWinProbPct}% (Fair {analysis.fairOddsDecimal.toFixed(2)}x)
+                      </span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-emerald-400"
+                        style={{ width: `${analysis.trueWinProbPct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Market Implied Bar */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[11px] font-mono">
+                      <span className="text-sky-300">Bookmaker / Polymarket Implied</span>
+                      <span className="font-bold text-sky-300">
+                        {analysis.marketImpliedProbPct}% (Odds {analysis.marketOddsDecimal.toFixed(2)}x)
+                      </span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-sky-400"
+                        style={{ width: `${analysis.marketImpliedProbPct}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Why Series > Single Map Callout (Anti-Tilt Rule) */}
+                <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-3.5 space-y-1">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-sky-300 flex items-center gap-1.5">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    Why Series &gt; Single Map (Anti-Tilt Rule)
+                  </div>
+                  <p className="text-xs text-slate-200 leading-relaxed">
+                    {analysis.whySeriesOverSingleMap}
+                  </p>
+                </div>
+
+                {/* Key Risk / Invalidation Factors */}
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3.5 space-y-1.5">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-rose-300 flex items-center gap-1.5">
+                    <AlertOctagon className="h-3.5 w-3.5" />
+                    Key Risk &amp; Invalidation Factors
+                  </div>
+                  <ul className="space-y-1">
+                    {analysis.invalidationFactors.map((factor, i) => (
+                      <li key={i} className="text-xs text-rose-100/90 flex items-start gap-2">
+                        <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-rose-400 shrink-0" />
+                        <span>{factor}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {/* 1-10 Investability Scale + Stake & Liquidity Capacity */}
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                        <Gauge className="h-3.5 w-3.5 text-[#5ce6b6]" /> Investability:
+                      </span>
+                      <span
+                        className={`text-xl font-bold font-mono ${getScoreTextColor(
+                          analysis.interestScore
+                        )}`}
+                      >
+                        {analysis.interestScore}/10
+                      </span>
+                      <span className="text-xs text-slate-300">{analysis.investabilityLabel}</span>
+                    </div>
+                  </div>
                   <div className="grid grid-cols-10 gap-1">
                     {Array.from({ length: 10 }, (_, idx) => {
                       const seg = idx + 1;
                       return (
                         <div
                           key={seg}
-                          className={`h-2.5 rounded-xs transition-all ${getSegmentColor(
+                          className={`h-2 rounded-xs ${getSegmentColor(
                             seg,
                             seg <= analysis.interestScore
                           )}`}
@@ -254,17 +388,9 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
                       );
                     })}
                   </div>
-                  <div className="flex justify-between text-[10px] font-mono text-slate-500">
-                    <span>1 · Extreme Risk / Avoid</span>
-                    <span>5 · Speculative</span>
-                    <span>10 · Prime Value / High Conviction</span>
-                  </div>
                 </div>
 
-                <p className="text-xs text-[#72e4c2] font-medium pt-1">{analysis.verdictHeadline}</p>
-
-                {/* Volume & Max Bettable Capacity Row */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   <div className="rounded-lg border border-[#263750] bg-[#0c1523] p-2.5">
                     <div className="text-[10px] text-slate-400 flex items-center gap-1">
                       <DollarSign className="h-3 w-3 text-[#5ce6b6]" /> 24h Volume
@@ -285,9 +411,10 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
                   <div className="rounded-lg border border-[#263750] bg-[#0c1523] p-2.5">
                     <div className="text-[10px] text-slate-400">Max Safe Bet</div>
                     <div className="mt-1 text-sm font-bold font-mono text-[#eac382]">
-                      ~${analysis.maxSafeStakeUsd.toLocaleString()}
+                      {analysis.maxSafeStakeUsd > 0
+                        ? `~$${analysis.maxSafeStakeUsd.toLocaleString()}`
+                        : '$0 (Skip)'}
                     </div>
-                    <div className="text-[10px] text-slate-500">Pre-slippage cap</div>
                   </div>
 
                   <div className="rounded-lg border border-[#263750] bg-[#0c1523] p-2.5">
@@ -297,98 +424,14 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
                     </div>
                   </div>
                 </div>
-
-                {/* Narrative Tags */}
-                {analysis.narrativeTags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {analysis.narrativeTags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="inline-flex items-center gap-1 rounded-md border border-[#263750] bg-[#0c1523] px-2 py-0.5 text-[11px] text-slate-300"
-                      >
-                        <Flame className="h-3 w-3 text-amber-400" />
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
 
-              {/* Best Market Angle + Multi-Market Lines (Moneyline, Handicap, O/U, Map Winners) */}
-              <div className="rounded-xl border border-[#263750] bg-[#111c2d] p-4 space-y-3.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#90d5ff]">
-                    <Layers className="h-4 w-4 text-[#4bb5f7]" />
-                    Available Markets (Moneyline · Handicap · Over/Under · Maps)
-                  </div>
-                  <span className="text-[11px] font-mono text-slate-400">
-                    {availableMarkets.length} markets
-                  </span>
-                </div>
-
-                {/* Best Market Angle Callout */}
-                <div className="rounded-lg border border-[#5ce6b6]/35 bg-[#5ce6b6]/10 p-3 space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#72e4c2]">
-                      <Target className="h-3.5 w-3.5" />
-                      Best Market Angle: {analysis.recommendedMarket.category}
-                    </span>
-                    <span className="font-mono text-xs font-bold text-[#eac382]">
-                      {analysis.recommendedMarket.selection} @ {analysis.recommendedMarket.oddsDecimal.toFixed(2)}x
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-300">{analysis.recommendedMarket.edgeNote}</p>
-                </div>
-
-                {/* Full Multi-Market Table */}
-                {availableMarkets.length > 0 && (
-                  <div className="space-y-2">
-                    {availableMarkets.map((m) => (
-                      <div
-                        key={m.id}
-                        className="rounded-lg border border-[#263750] bg-[#0c1523] p-3 space-y-2"
-                      >
-                        <div className="flex items-center justify-between gap-2 text-xs">
-                          <span className="font-medium text-slate-200 truncate">{m.question}</span>
-                          <div className="flex items-center gap-2 shrink-0 text-[10px] font-mono">
-                            <span className="px-1.5 py-0.5 rounded bg-[#111c2d] border border-[#263750] text-[#90d5ff]">
-                              {m.category}
-                            </span>
-                            {m.volume24h > 0 && (
-                              <span className="text-[#72e4c2]">Vol {formatUsd(m.volume24h)}</span>
-                            )}
-                            {m.liquidity > 0 && (
-                              <span className="text-slate-400">Liq {formatUsd(m.liquidity)}</span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-                          <div className="flex items-center justify-between rounded bg-[#111c2d] px-2.5 py-1.5 border border-[#263750]/80">
-                            <span className="text-slate-200 truncate pr-2">{m.teamA}</span>
-                            <span className="font-bold text-[#72e4c2] shrink-0">
-                              {m.oddsA.toFixed(2)}x ({Math.round(m.probA * 100)}%)
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between rounded bg-[#111c2d] px-2.5 py-1.5 border border-[#263750]/80">
-                            <span className="text-slate-200 truncate pr-2">{m.teamB}</span>
-                            <span className="font-bold text-[#90d5ff] shrink-0">
-                              {m.oddsB.toFixed(2)}x ({Math.round(m.probB * 100)}%)
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* 4-Pillar Conviction Chart */}
+              {/* 6-Pillar Conviction Chart */}
               <div className="rounded-xl border border-[#263750] bg-[#111c2d] p-4">
                 <div className="text-xs font-semibold uppercase tracking-wider text-[#a0b1cb] mb-3">
-                  4-Pillar Edge Conviction Profile
+                  6-Pillar Multi-Factor Evaluation Matrix
                 </div>
-                <div className="h-36 w-full">
+                <div className="h-44 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
                       data={pillarChartData}
@@ -399,7 +442,7 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
                       <YAxis
                         type="category"
                         dataKey="name"
-                        width={85}
+                        width={96}
                         tick={{ fill: '#cbd5e1', fontSize: 11 }}
                         axisLine={false}
                         tickLine={false}
@@ -412,9 +455,9 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
                           borderRadius: '8px',
                           fontSize: '12px',
                         }}
-                        formatter={(val) => [`${val}/100`, 'Conviction']}
+                        formatter={(val) => [`${val}/100`, 'Pillar Score']}
                       />
-                      <Bar dataKey="score" radius={[0, 6, 6, 0]} barSize={16}>
+                      <Bar dataKey="score" radius={[0, 6, 6, 0]} barSize={14}>
                         {pillarChartData.map((entry, idx) => (
                           <Cell key={idx} fill={entry.color} />
                         ))}
@@ -424,48 +467,111 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
                 </div>
               </div>
 
-              {/* 4-Pillar Breakdown Cards */}
+              {/* 6-Pillar Breakdown Cards */}
               <div className="space-y-3">
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
                   <Brain className="h-4 w-4 text-sky-400" />
-                  4-Pillar Matchup Breakdown
+                  Institutional 6-Pillar Breakdown (Evaluated Before Odds)
                 </h4>
 
                 <PillarCard
                   icon={<TrendingUp className="h-4 w-4 text-emerald-400" />}
-                  pillar={analysis.pillars.recentForm}
+                  pillar={analysis.pillars.sosAndTrueForm}
                   accent="emerald"
                 />
                 <PillarCard
-                  icon={<Swords className="h-4 w-4 text-sky-400" />}
-                  pillar={analysis.pillars.headToHead}
+                  icon={<Map className="h-4 w-4 text-sky-400" />}
+                  pillar={analysis.pillars.seriesDepth}
                   accent="sky"
                 />
                 <PillarCard
-                  icon={<Map className="h-4 w-4 text-purple-400" />}
-                  pillar={analysis.pillars.statsAndDraft}
+                  icon={<Swords className="h-4 w-4 text-purple-400" />}
+                  pillar={analysis.pillars.stylisticH2H}
                   accent="purple"
                 />
                 <PillarCard
-                  icon={<ShieldAlert className="h-4 w-4 text-amber-400" />}
-                  pillar={analysis.pillars.narrativesAndCurses}
+                  icon={<Flame className="h-4 w-4 text-amber-400" />}
+                  pillar={analysis.pillars.stakesAndContext}
                   accent="amber"
+                />
+                <PillarCard
+                  icon={<ShieldAlert className="h-4 w-4 text-rose-400" />}
+                  pillar={analysis.pillars.narrativesAndCurses}
+                  accent="rose"
+                />
+                <PillarCard
+                  icon={<Scale className="h-4 w-4 text-emerald-300" />}
+                  pillar={analysis.pillars.oddsSanityCheck}
+                  accent="emerald"
                 />
               </div>
 
-              <div className="rounded-lg border border-slate-800/80 bg-slate-950/60 p-3 text-[11px] text-slate-500">
-                {analysis.engine === 'deterministic' ? (
-                  <span>
-                    Running built-in <strong className="text-slate-300">Quant Analyzer</strong> (no API key required).
-                    Add <code className="text-slate-300">GEMINI_API_KEY</code> to{' '}
-                    <code className="text-slate-300">.env.local</code> to auto-upgrade to Gemini AI narratives.
-                  </span>
-                ) : (
-                  <span>Powered by live Gemini AI quantitative analysis. For informational &amp; integrity research only.</span>
-                )}
-              </div>
+              {/* Available Markets Reference Board */}
+              {availableMarkets.length > 0 && (
+                <div className="rounded-xl border border-[#263750] bg-[#111c2d] p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#90d5ff]">
+                      <Layers className="h-4 w-4 text-[#4bb5f7]" />
+                      Market Lines Reference (Series-First Priority)
+                    </div>
+                    <span className="text-[11px] font-mono text-slate-400">
+                      {availableMarkets.length} markets
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {availableMarkets.map((m) => {
+                      const isSingleMap =
+                        m.category === 'Map Winner' || /map\s+[123]/i.test(m.question);
+                      return (
+                        <div
+                          key={m.id}
+                          className={`rounded-lg border p-3 space-y-2 ${
+                            isSingleMap
+                              ? 'border-amber-500/25 bg-[#0c1523]/60 opacity-80'
+                              : 'border-[#263750] bg-[#0c1523]'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <span className="font-medium text-slate-200 truncate">{m.question}</span>
+                            <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-mono">
+                              {isSingleMap ? (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                                  Single-Map (High Variance)
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
+                                  {m.category}
+                                </span>
+                              )}
+                              {m.volume24h > 0 && (
+                                <span className="text-[#72e4c2]">Vol {formatUsd(m.volume24h)}</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                            <div className="flex items-center justify-between rounded bg-[#111c2d] px-2.5 py-1.5 border border-[#263750]/80">
+                              <span className="text-slate-200 truncate pr-2">{m.teamA}</span>
+                              <span className="font-bold text-[#72e4c2] shrink-0">
+                                {m.oddsA.toFixed(2)}x ({Math.round(m.probA * 100)}%)
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between rounded bg-[#111c2d] px-2.5 py-1.5 border border-[#263750]/80">
+                              <span className="text-slate-200 truncate pr-2">{m.teamB}</span>
+                              <span className="font-bold text-[#90d5ff] shrink-0">
+                                {m.oddsB.toFixed(2)}x ({Math.round(m.probB * 100)}%)
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </>
-          ) : null}
+          )}
         </div>
       </aside>
     </div>
@@ -479,7 +585,7 @@ function PillarCard({
 }: {
   icon: React.ReactNode;
   pillar: PillarDetail;
-  accent: 'emerald' | 'sky' | 'purple' | 'amber';
+  accent: 'emerald' | 'sky' | 'purple' | 'amber' | 'rose';
 }) {
   const accentText =
     accent === 'emerald'
@@ -488,7 +594,9 @@ function PillarCard({
         ? 'text-sky-300'
         : accent === 'purple'
           ? 'text-purple-300'
-          : 'text-amber-300';
+          : accent === 'amber'
+            ? 'text-amber-300'
+            : 'text-rose-300';
 
   return (
     <div className="rounded-xl border border-[#263750] bg-[#111c2d] p-4 space-y-2">

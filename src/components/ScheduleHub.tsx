@@ -10,7 +10,7 @@ import {
   Sparkles,
   Trophy,
 } from 'lucide-react';
-import { EsportsMatch, GameTitle, MatchFormat, ScheduleResponse } from '@/types/esports';
+import { EsportsMatch, GameTitle, MatchFormat, ScheduleResponse, VerdictBadge } from '@/types/esports';
 
 interface ScheduleHubProps {
   data: ScheduleResponse;
@@ -215,6 +215,19 @@ function getQuickScoreStyle(score: number): string {
   return 'bg-rose-500/15 text-rose-300 border-rose-500/40';
 }
 
+function getVerdictBadgeStyle(verdict: VerdictBadge): string {
+  switch (verdict) {
+    case 'STRONG SERIES LOCK':
+      return 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50';
+    case 'VALUE SERIES PLAY':
+      return 'bg-sky-500/20 text-sky-300 border-sky-400/50';
+    case 'HIGH VARIANCE / SKIP':
+      return 'bg-amber-500/20 text-amber-300 border-amber-400/50';
+    case 'TRAP MATCH / AVOID':
+      return 'bg-rose-500/20 text-rose-300 border-rose-400/50';
+  }
+}
+
 function MatchCard({ match, onClick }: { match: EsportsMatch; onClick: () => void }) {
   const isLive = match.status === 'live';
   const markets = match.markets || [];
@@ -243,16 +256,25 @@ function MatchCard({ match, onClick }: { match: EsportsMatch; onClick: () => voi
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
           {qs && (
-            <span
-              className={`px-2 py-0.5 rounded-full text-[11px] font-mono font-bold border ${getQuickScoreStyle(
-                qs.interestScore
-              )}`}
-              title="1 = Extremely Risky / Avoid · 10 = High Conviction / Best to Invest"
-            >
-              {qs.interestScore}/10 · {qs.riskLevel} Risk
-            </span>
+            <>
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${getVerdictBadgeStyle(
+                  qs.verdictBadge
+                )}`}
+              >
+                {qs.verdictBadge}
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded-full text-[11px] font-mono font-bold border ${getQuickScoreStyle(
+                  qs.interestScore
+                )}`}
+                title="1 = Extremely Risky / Avoid · 10 = High Conviction / Best to Invest"
+              >
+                {qs.interestScore}/10
+              </span>
+            </>
           )}
           {isLive ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/15 border border-rose-500/30 px-2 py-0.5 text-[11px] font-semibold text-rose-300">

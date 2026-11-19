@@ -401,7 +401,7 @@ export async function fetchPolymarketEsportsRadar(): Promise<RadarResponse> {
     `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=counter-strike-2&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=15`,
     `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=dota-2&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=15`,
     `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=valorant&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=15`,
-    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=nba&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=12`,
+    `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=nba&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=6`,
     `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=tennis&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=12`,
     `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=premier-league&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=10`,
     `${GAMMA_BASE}/events?active=true&closed=false&tag_slug=la-liga&end_date_min=${minDate}&order=volume24hr&ascending=false&limit=8`,

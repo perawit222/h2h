@@ -767,10 +767,18 @@ export async function fetchDailySchedule(): Promise<ScheduleResponse> {
       quickScore: {
         interestScore: analysis.interestScore,
         investabilityLabel: analysis.investabilityLabel,
+        verdictBadge: analysis.verdictBadge,
+        marketRecommendation: analysis.marketRecommendation,
         riskLevel: analysis.riskLevel,
+        trueWinProbPct: analysis.trueWinProbPct,
+        marketImpliedProbPct: analysis.marketImpliedProbPct,
         estimatedEdgePct: analysis.estimatedEdgePct,
         maxSafeStakeUsd: analysis.maxSafeStakeUsd,
+        recommendedSide: analysis.recommendedSide,
         bestAngleSummary: `${analysis.recommendedMarket.category}: ${analysis.recommendedMarket.selection} @ ${analysis.recommendedMarket.oddsDecimal.toFixed(2)}x`,
+        whySeriesOverSingleMap: analysis.whySeriesOverSingleMap,
+        primaryInvalidationRisk:
+          analysis.invalidationFactors[0] || 'Monitor live veto/lineup before execution.',
       },
     };
   });

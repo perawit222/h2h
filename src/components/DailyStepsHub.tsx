@@ -14,11 +14,24 @@ import {
   Square,
   TrendingUp,
 } from 'lucide-react';
-import { DailyParlayTier, EsportsMatch, GameTitle, RiskLevel } from '@/types/esports';
+import { DailyParlayTier, EsportsMatch, GameTitle, RiskLevel, VerdictBadge } from '@/types/esports';
 
 interface DailyStepsHubProps {
   parlays: DailyParlayTier[];
   onSelectMatch: (match: EsportsMatch) => void;
+}
+
+function getVerdictStyle(verdict: VerdictBadge): string {
+  switch (verdict) {
+    case 'STRONG SERIES LOCK':
+      return 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50';
+    case 'VALUE SERIES PLAY':
+      return 'bg-sky-500/20 text-sky-300 border-sky-400/50';
+    case 'HIGH VARIANCE / SKIP':
+      return 'bg-amber-500/20 text-amber-300 border-amber-400/50';
+    case 'TRAP MATCH / AVOID':
+      return 'bg-rose-500/20 text-rose-300 border-rose-400/50';
+  }
 }
 
 function getRiskBadgeClass(risk: RiskLevel): string {
@@ -236,6 +249,9 @@ export function DailyStepsHub({ parlays, onSelectMatch }: DailyStepsHubProps) {
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${getGamePill(leg.game)}`}>
                             {leg.game}
                           </span>
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${getVerdictStyle(leg.verdictBadge)}`}>
+                            {leg.verdictBadge}
+                          </span>
                           <span className="text-[10px] font-mono text-sky-300">{leg.marketCategory}</span>
                         </div>
 
@@ -245,7 +261,7 @@ export function DailyStepsHub({ parlays, onSelectMatch }: DailyStepsHubProps) {
                               leg.riskLevel
                             )}`}
                           >
-                            {leg.investabilityScore}/10 · {leg.riskLevel}
+                            {leg.investabilityScore}/10
                           </span>
                           <span className="font-mono text-xs font-bold text-[#eac382]">
                             {leg.oddsDecimal.toFixed(2)}x
@@ -263,7 +279,7 @@ export function DailyStepsHub({ parlays, onSelectMatch }: DailyStepsHubProps) {
                           <span className="font-normal text-slate-400">({leg.matchName})</span>
                         </button>
                         <span className="text-[11px] font-mono text-emerald-400 shrink-0">
-                          {leg.modelWinProbPct}% win
+                          True {leg.trueWinProbPct}% vs Mkt {leg.marketImpliedProbPct}%
                         </span>
                       </div>
 
@@ -401,9 +417,12 @@ export function DailyStepsHub({ parlays, onSelectMatch }: DailyStepsHubProps) {
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${getGamePill(leg.game)}`}>
                             {leg.game}
                           </span>
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${getVerdictStyle(leg.verdictBadge)}`}>
+                            {leg.verdictBadge}
+                          </span>
                           <span className="text-[10px] font-mono text-[#90d5ff]">{leg.marketCategory}</span>
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${getRiskBadgeClass(leg.riskLevel)}`}>
-                            {leg.investabilityScore}/10 · {leg.riskLevel}
+                            {leg.investabilityScore}/10
                           </span>
                         </div>
                         <span className={`font-mono text-xs font-bold ${isSafe ? 'text-emerald-400' : 'text-amber-400'}`}>
@@ -416,7 +435,7 @@ export function DailyStepsHub({ parlays, onSelectMatch }: DailyStepsHubProps) {
                           Pick: {leg.selection} <span className="font-normal text-slate-400">({leg.matchName})</span>
                         </span>
                         <span className="text-[11px] font-mono text-emerald-400 shrink-0">
-                          {leg.modelWinProbPct}% win
+                          True {leg.trueWinProbPct}% vs Mkt {leg.marketImpliedProbPct}%
                         </span>
                       </div>
 

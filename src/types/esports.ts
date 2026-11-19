@@ -17,6 +17,12 @@ export type AnomalyTag =
 
 export type MarketCategory = 'Match Winner' | 'Map Winner' | 'Handicap / Total' | 'Other';
 
+export type VerdictBadge =
+  | 'STRONG SERIES LOCK'
+  | 'VALUE SERIES PLAY'
+  | 'HIGH VARIANCE / SKIP'
+  | 'TRAP MATCH / AVOID';
+
 export interface PricePoint {
   time: string;
   prob: number;
@@ -56,13 +62,13 @@ export interface AnomalyAlert {
   volume24h: number;
   totalVolume: number;
   liquidity: number;
-  impliedOdds: number; // 0 to 1
+  impliedOdds: number;
   decimalOdds: number;
   opponentImpliedOdds: number;
   opponentDecimalOdds: number;
-  priceChange24h: number; // e.g. +0.125 means +12.5%
+  priceChange24h: number;
   priceChange1h: number;
-  suspicionScore: number; // 0 to 100
+  suspicionScore: number;
   severity: 'critical' | 'elevated' | 'watch';
   tags: AnomalyTag[];
   reasonSummary: string;
@@ -110,10 +116,17 @@ export interface TeamSnapshot {
 export interface MatchQuickScore {
   interestScore: number; // 1 (Risky) to 10 (Best to Invest)
   investabilityLabel: string;
+  verdictBadge: VerdictBadge;
+  marketRecommendation: string;
   riskLevel: RiskLevel;
+  trueWinProbPct: number;
+  marketImpliedProbPct: number;
   estimatedEdgePct: number;
   maxSafeStakeUsd: number;
+  recommendedSide: string;
   bestAngleSummary: string;
+  whySeriesOverSingleMap: string;
+  primaryInvalidationRisk: string;
 }
 
 export interface ParlayLeg {
@@ -123,14 +136,19 @@ export interface ParlayLeg {
   matchName: string;
   tournament: string;
   startTimeIso: string;
+  format: MatchFormat;
   marketCategory: string;
   selection: string;
   oddsDecimal: number;
+  trueWinProbPct: number;
+  marketImpliedProbPct: number;
   modelWinProbPct: number;
   edgePct: number;
   investabilityScore: number; // 1-10
+  verdictBadge: VerdictBadge;
   riskLevel: RiskLevel;
   riskNote: string;
+  whySeriesNote: string;
   rationale: string;
 }
 
@@ -144,7 +162,7 @@ export interface DailyParlayTier {
   combinedOdds: number;
   combinedWinProbPct: number;
   expectedValuePct: number;
-  investabilityScore: number; // 1-10
+  investabilityScore: number;
   riskLevel: RiskLevel;
   recommendedUnits: string;
   maxSafeStakeUsd: number;
@@ -215,8 +233,12 @@ export interface RecommendedMarketAngle {
 export interface MatchAnalysis {
   matchId: string;
   engine: 'gemini' | 'deterministic';
+  verdictBadge: VerdictBadge;
+  marketRecommendation: string; // e.g., "Series Winner (Bo3)" or "NO BET (Skip)"
   interestScore: number; // 1 (Extremely Risky / Avoid) to 10 (High Conviction / Best to Invest)
   investabilityLabel: string;
+  trueWinProbPct: number; // Model True Series Win Probability BEFORE odds
+  marketImpliedProbPct: number; // Vig-adjusted Market Implied Probability
   estimatedEdgePct: number;
   riskLevel: RiskLevel;
   recommendedSide: string;
@@ -226,12 +248,16 @@ export interface MatchAnalysis {
   recommendedUnits: string;
   liquidityTier: 'Deep' | 'Moderate' | 'Thin' | 'Unpriced';
   recommendedMarket: RecommendedMarketAngle;
+  whySeriesOverSingleMap: string;
+  invalidationFactors: string[];
   verdictHeadline: string;
   narrativeTags: string[];
   pillars: {
-    recentForm: PillarDetail;
-    headToHead: PillarDetail;
-    statsAndDraft: PillarDetail;
+    sosAndTrueForm: PillarDetail;
+    seriesDepth: PillarDetail;
+    stylisticH2H: PillarDetail;
+    stakesAndContext: PillarDetail;
     narrativesAndCurses: PillarDetail;
+    oddsSanityCheck: PillarDetail;
   };
 }
