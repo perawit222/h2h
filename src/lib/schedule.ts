@@ -1,4 +1,5 @@
-import { EsportsMatch, ScheduleResponse, TeamSnapshot } from '@/types/esports';
+import { EsportsMatch, GameTitle, ScheduleResponse, TeamSnapshot } from '@/types/esports';
+import { fetchPolymarketEsportsRadar } from './polymarket';
 
 interface OpenDotaProMatch {
   match_id: number;
@@ -616,20 +617,108 @@ function getCuratedDailyMatches(): EsportsMatch[] {
   ];
 }
 
+function buildPolymarketScheduleMatches(
+  alerts: Awaited<ReturnType<typeof fetchPolymarketEsportsRadar>>['alerts']
+): EsportsMatch[] {
+  const h2hMatches: EsportsMatch[] = [];
+  const seen = new Set<string>();
+
+  for (const a of alerts) {
+    if (!a.opponentOutcome) continue;
+    const o1 = a.outcome.trim();
+    const o2 = a.opponentOutcome.trim();
+    if (
+      !o1 ||
+      !o2 ||
+      /^(yes|no|over|under|draw|tie)$/i.test(o1) ||
+      /^(yes|no|over|under|draw|tie)$/i.test(o2)
+    ) {
+      continue;
+    }
+
+    const key = `${a.game}-${[o1, o2].sort().join('-').toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const probA = Math.max(0.08, Math.min(0.92, a.impliedOdds));
+    const probB = Math.max(0.08, Math.min(0.92, 1 - probA));
+    const oddsA = Number((1 / probA).toFixed(2));
+    const oddsB = Number((1 / probB).toFixed(2));
+
+    const format = /bo5/i.test(a.matchName)
+      ? 'Bo5'
+      : /bo1/i.test(a.matchName)
+        ? 'Bo1'
+        : 'Bo3';
+
+    const keyMapsByGame: Record<GameTitle, string[]> = {
+      CS2: ['Mirage', 'Inferno', 'Ancient', 'Nuke'],
+      Valorant: ['Ascent', 'Haven', 'Lotus', 'Sunset'],
+      LoL: ['Azir', 'Vi', 'KaiSa', 'Rumble'],
+      'Dota 2': ['Shadow Fiend', 'Tiny', 'Puck', 'Centaur'],
+    };
+
+    h2hMatches.push({
+      id: `pm-sched-${a.marketId}`,
+      game: a.game,
+      tournament: a.eventTitle.length > 48 ? `${a.eventTitle.slice(0, 47)}…` : a.eventTitle,
+      tier: a.tier === 'Tier 1' ? 'S-Tier' : a.tier === 'Tier 2' ? 'A-Tier' : 'B-Tier',
+      stage: 'Polymarket Live Market',
+      isLan: a.tier === 'Tier 1',
+      format,
+      status: 'upcoming',
+      startTimeIso: a.endDate || new Date(Date.now() + 3 * 3600 * 1000).toISOString(),
+      source: 'Polymarket Odds',
+      polymarketUrl: a.polymarketUrl,
+      teamA: buildDotaTeamSnapshot(o1, oddsA),
+      teamB: buildDotaTeamSnapshot(o2, oddsB),
+      h2h: {
+        teamAWins: seededNumber(o1 + o2, 1, 6),
+        teamBWins: seededNumber(o2 + o1, 1, 6),
+        lastMeetingSummary: `Live Polymarket order-book pricing ($${Math.round(a.volume24h).toLocaleString()} 24h vol)`,
+        mapDiffA: seededNumber(o1, -2, 3),
+      },
+      mapOrDraftContext: {
+        edgeTeam: probA > 0.56 ? 'A' : probB > 0.56 ? 'B' : 'Even',
+        keyMapsOrHeroes: keyMapsByGame[a.game],
+        statHighlight: `Live market implies ${Math.round(probA * 100)}% vs ${Math.round(probB * 100)}% (${a.priceChange24h >= 0 ? '+' : ''}${Math.round(a.priceChange24h * 100)}% 24h drift)`,
+      },
+      narrativeNotes: [
+        a.reasonSummary,
+        `Polymarket liquidity pool: $${Math.round(a.liquidity).toLocaleString()}`,
+      ],
+    });
+
+    if (h2hMatches.length >= 6) break;
+  }
+
+  return h2hMatches;
+}
+
 export async function fetchDailySchedule(): Promise<ScheduleResponse> {
   const fetchedAt = new Date().toISOString();
   const sourcesUsed: string[] = [];
 
-  const openDotaMatches = await fetchOpenDotaLiveMatches();
+  const [openDotaMatches, radar] = await Promise.all([
+    fetchOpenDotaLiveMatches(),
+    fetchPolymarketEsportsRadar(),
+  ]);
+
   if (openDotaMatches.length > 0) {
     sourcesUsed.push('OpenDota Public API');
+  }
+
+  const polymarketMatches =
+    radar.source === 'live' ? buildPolymarketScheduleMatches(radar.alerts) : [];
+  if (polymarketMatches.length > 0) {
+    sourcesUsed.push('Polymarket Live Odds');
   }
 
   const curated = getCuratedDailyMatches();
   sourcesUsed.push('H2H Curated Feed');
 
-  // Merge live OpenDota matches with curated multi-game slate
-  const combined = [...openDotaMatches, ...curated];
+  // Merge live Polymarket + OpenDota matches with curated multi-game slate
+  const combined = [...polymarketMatches, ...openDotaMatches, ...curated];
 
   // Sort: live first, then soonest startTimeIso
   combined.sort((a, b) => {
