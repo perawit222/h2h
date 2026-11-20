@@ -94,14 +94,26 @@ export type MatchFormat = 'Bo1' | 'Bo3' | 'Bo5' | '90m' | '4Q' | 'Sets';
 export type MatchStatus = 'live' | 'upcoming';
 export type RiskLevel = 'Low' | 'Medium' | 'High' | 'Extreme';
 
+export interface InjuryItem {
+  player: string;
+  position?: string;
+  status: 'Out' | 'Suspended' | 'Doubtful' | 'Day-To-Day' | 'Questionable' | 'News';
+  detail: string;
+  source: 'ESPN Injuries' | 'FPL Official' | 'ESPN News';
+}
+
 export interface TeamSnapshot {
   name: string;
   tag: string;
   ranking: number;
   oddsDecimal: number;
   impliedProb: number;
-  recentForm: ('W' | 'L')[];
+  recentForm: ('W' | 'L' | 'D')[];
   winRateLast10: number;
+  seasonRecord?: string;
+  homeRecord?: string;
+  awayRecord?: string;
+  injuries?: InjuryItem[];
   starPlayer: {
     name: string;
     metricLabel: string;
@@ -127,6 +139,7 @@ export interface MatchQuickScore {
   bestAngleSummary: string;
   whySeriesOverSingleMap: string;
   primaryInvalidationRisk: string;
+  injurySummary?: string;
 }
 
 export interface ParlayLeg {
@@ -149,6 +162,7 @@ export interface ParlayLeg {
   verdictBadge: VerdictBadge;
   riskLevel: RiskLevel;
   riskNote: string;
+  injurySummary?: string;
   whySeriesNote: string;
   rationale: string;
 }

@@ -10,6 +10,12 @@ import {
 import { fetchPolymarketEsportsRadar } from './polymarket';
 import { runDeterministicAnalysis } from './analyzer';
 import { buildDailyParlays } from './parlay';
+import {
+  fetchAllLiveInjuries,
+  lookupTeamInjuries,
+  normalizeInjuryTeamKey,
+  summarizeMatchInjuries,
+} from './injuries';
 
 function serverOrBrowserFetchInit(revalidateSeconds: number, extraHeaders?: Record<string, string>): RequestInit & { next?: { revalidate: number } } {
   const isBrowser = typeof window !== 'undefined';
@@ -551,8 +557,27 @@ interface EspnOddsRaw {
 
 interface EspnCompetitorRaw {
   homeAway?: string;
+  form?: string;
   team?: { displayName?: string; shortDisplayName?: string };
-  records?: { summary?: string }[];
+  records?: { name?: string; type?: string; summary?: string }[];
+}
+
+function parseEspnForm(formStr?: string): ('W' | 'L' | 'D')[] | undefined {
+  if (!formStr) return undefined;
+  const parsed = formStr
+    .toUpperCase()
+    .split('')
+    .filter((ch): ch is 'W' | 'L' | 'D' => ch === 'W' || ch === 'L' || ch === 'D')
+    .slice(-5);
+  return parsed.length >= 3 ? parsed : undefined;
+}
+
+function parseEspnRecords(records?: { name?: string; type?: string; summary?: string }[]) {
+  if (!records?.length) return {};
+  const overall = records.find((r) => r.name === 'overall' || r.type === 'total')?.summary || records[0]?.summary;
+  const home = records.find((r) => /home/i.test(r.name || '') || r.type === 'home')?.summary;
+  const away = records.find((r) => /road|away/i.test(r.name || '') || r.type === 'road')?.summary;
+  return { seasonRecord: overall, homeRecord: home, awayRecord: away };
 }
 
 interface EspnEventRaw {
@@ -733,6 +758,21 @@ async function fetchEspnSportsMatches(): Promise<EsportsMatch[]> {
 
           const isLive = ev.status?.type?.state === 'in';
           const probA = 1 / oddsA;
+          const recA = parseEspnRecords(home.records);
+          const recB = parseEspnRecords(away.records);
+          const formA = parseEspnForm(home.form);
+          const formB = parseEspnForm(away.form);
+
+          const snapA = buildTeamSnapshot(tA, f.game, oddsA);
+          const snapB = buildTeamSnapshot(tB, f.game, oddsB);
+          if (formA) snapA.recentForm = formA;
+          if (formB) snapB.recentForm = formB;
+          if (recA.seasonRecord) snapA.seasonRecord = recA.seasonRecord;
+          if (recA.homeRecord) snapA.homeRecord = recA.homeRecord;
+          if (recA.awayRecord) snapA.awayRecord = recA.awayRecord;
+          if (recB.seasonRecord) snapB.seasonRecord = recB.seasonRecord;
+          if (recB.homeRecord) snapB.homeRecord = recB.homeRecord;
+          if (recB.awayRecord) snapB.awayRecord = recB.awayRecord;
 
           out.push({
             id: `espn-${f.game.toLowerCase()}-${ev.id}`,
@@ -751,8 +791,8 @@ async function fetchEspnSportsMatches(): Promise<EsportsMatch[]> {
             markets: hasRealOdds
               ? realMarkets
               : buildReferenceSubMarkets(`espn-${ev.id}`, tA, tB, probA, f.format, f.game),
-            teamA: buildTeamSnapshot(tA, f.game, oddsA),
-            teamB: buildTeamSnapshot(tB, f.game, oddsB),
+            teamA: snapA,
+            teamB: snapB,
             h2h: {
               teamAWins: seededNumber(tA, 2, 7),
               teamBWins: seededNumber(tB, 1, 6),
@@ -796,13 +836,37 @@ export async function fetchDailySchedule(
 
   // In browser mode (e.g., GitHub Pages), fetch directly from CORS-enabled public APIs
   // (Polymarket Gamma API, ESPN DraftKings API, OpenDota Live API) for 100% live daily updates!
-  const [radar, bo3Matches, openDotaMatches, lolMatches, espnMatches] = await Promise.all([
+  const [radar, bo3Matches, openDotaMatches, lolMatches, espnMatches, injuryMaps] = await Promise.all([
     preFetchedRadar ? Promise.resolve(preFetchedRadar) : fetchPolymarketEsportsRadar(),
     isBrowser ? Promise.resolve([] as EsportsMatch[]) : fetchBo3Cs2Matches(),
     fetchOpenDotaLive(),
     isBrowser ? Promise.resolve([] as EsportsMatch[]) : fetchLoLEsportsSchedule(),
     fetchEspnSportsMatches(),
+    fetchAllLiveInjuries(),
   ]);
+
+  if (injuryMaps.nba.size > 0 || injuryMaps.football.size > 0) {
+    sourcesUsed.push('Live Injury Reports (ESPN/FPL)');
+  }
+
+  // Index ESPN real season records & form by normalized team key so Polymarket NBA/Football matches also inherit them!
+  const espnTeamMeta = new Map<
+    string,
+    { seasonRecord?: string; homeRecord?: string; awayRecord?: string; recentForm?: ('W' | 'L' | 'D')[] }
+  >();
+  for (const em of espnMatches) {
+    for (const tm of [em.teamA, em.teamB]) {
+      const k = normalizeInjuryTeamKey(tm.name);
+      if (k && !espnTeamMeta.has(k)) {
+        espnTeamMeta.set(k, {
+          seasonRecord: tm.seasonRecord,
+          homeRecord: tm.homeRecord,
+          awayRecord: tm.awayRecord,
+          recentForm: tm.recentForm,
+        });
+      }
+    }
+  }
 
   const nowMs = Date.now();
   const matchMap = new Map<string, EsportsMatch>();
@@ -911,8 +975,50 @@ export async function fetchDailySchedule(
     }
   }
 
-  const combined = Array.from(matchMap.values()).map((match) => {
+  const combined = Array.from(matchMap.values()).map((rawMatch) => {
+    // ALWAYS research & attach real live injuries + real ESPN season/home-away splits for Football & NBA BEFORE analyzing!
+    let match = rawMatch;
+    if (rawMatch.game === 'NBA' || rawMatch.game === 'Football') {
+      const injA = lookupTeamInjuries(rawMatch.game, rawMatch.teamA.name, injuryMaps);
+      const injB = lookupTeamInjuries(rawMatch.game, rawMatch.teamB.name, injuryMaps);
+      const metaA = espnTeamMeta.get(normalizeInjuryTeamKey(rawMatch.teamA.name));
+      const metaB = espnTeamMeta.get(normalizeInjuryTeamKey(rawMatch.teamB.name));
+
+      match = {
+        ...rawMatch,
+        teamA: {
+          ...rawMatch.teamA,
+          injuries: injA,
+          seasonRecord: rawMatch.teamA.seasonRecord || metaA?.seasonRecord,
+          homeRecord: rawMatch.teamA.homeRecord || metaA?.homeRecord,
+          awayRecord: rawMatch.teamA.awayRecord || metaA?.awayRecord,
+          recentForm:
+            rawMatch.source === 'Polymarket Live' && metaA?.recentForm
+              ? metaA.recentForm
+              : rawMatch.teamA.recentForm,
+        },
+        teamB: {
+          ...rawMatch.teamB,
+          injuries: injB,
+          seasonRecord: rawMatch.teamB.seasonRecord || metaB?.seasonRecord,
+          homeRecord: rawMatch.teamB.homeRecord || metaB?.homeRecord,
+          awayRecord: rawMatch.teamB.awayRecord || metaB?.awayRecord,
+          recentForm:
+            rawMatch.source === 'Polymarket Live' && metaB?.recentForm
+              ? metaB.recentForm
+              : rawMatch.teamB.recentForm,
+        },
+      };
+    }
+
     const analysis = runDeterministicAnalysis(match);
+    const injurySummary = summarizeMatchInjuries(
+      match.teamA.tag,
+      match.teamA.injuries,
+      match.teamB.tag,
+      match.teamB.injuries
+    );
+
     return {
       ...match,
       quickScore: {
@@ -930,6 +1036,7 @@ export async function fetchDailySchedule(
         whySeriesOverSingleMap: analysis.whySeriesOverSingleMap,
         primaryInvalidationRisk:
           analysis.invalidationFactors[0] || 'Monitor live veto/lineup before execution.',
+        injurySummary,
       },
     };
   });

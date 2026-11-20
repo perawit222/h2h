@@ -5,6 +5,7 @@ import {
   CalendarClock,
   ChevronRight,
   Globe,
+  HeartPulse,
   Monitor,
   Radio,
   Sparkles,
@@ -305,7 +306,9 @@ function MatchCard({ match, onClick }: { match: EsportsMatch; onClick: () => voi
                   className={`h-4 w-4 rounded text-[9px] font-bold flex items-center justify-center ${
                     r === 'W'
                       ? 'bg-emerald-500/20 text-emerald-300'
-                      : 'bg-rose-500/20 text-rose-300'
+                      : r === 'D'
+                        ? 'bg-slate-600/30 text-slate-300'
+                        : 'bg-rose-500/20 text-rose-300'
                   }`}
                 >
                   {r}
@@ -342,7 +345,9 @@ function MatchCard({ match, onClick }: { match: EsportsMatch; onClick: () => voi
                   className={`h-4 w-4 rounded text-[9px] font-bold flex items-center justify-center ${
                     r === 'W'
                       ? 'bg-emerald-500/20 text-emerald-300'
-                      : 'bg-rose-500/20 text-rose-300'
+                      : r === 'D'
+                        ? 'bg-slate-600/30 text-slate-300'
+                        : 'bg-rose-500/20 text-rose-300'
                   }`}
                 >
                   {r}
@@ -360,6 +365,14 @@ function MatchCard({ match, onClick }: { match: EsportsMatch; onClick: () => voi
           </div>
         </div>
       </div>
+
+      {/* Live Injury Report Strip (Football & NBA) */}
+      {(match.game === 'NBA' || match.game === 'Football') && qs?.injurySummary && (
+        <div className="flex items-center gap-1.5 rounded-md border border-rose-500/25 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-200">
+          <HeartPulse className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+          <span className="truncate">{qs.injurySummary}</span>
+        </div>
+      )}
 
       {/* Extra Markets Strip (Handicap & Over/Under preview) */}
       {(hcpMarket || ouMarket) && (

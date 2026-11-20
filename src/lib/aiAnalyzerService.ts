@@ -125,27 +125,40 @@ export function runDeterministicAnalysis(match: EsportsMatch): MatchAnalysis {
   const h2hRateA = h2h.teamAWins / totalH2H;
   const pillar3EdgeA = (h2hRateA - 0.5) * 24 + clamp(h2h.mapDiffA * 1.4, -7, 7);
 
-  // Pillar 4: Stakes, Motivation & Physical/Mental Context
-  let pillar4EdgeA = 0;
+  // Pillar 4: Stakes, Motivation, Injuries & Physical/Mental Context
+  const injA = teamA.injuries || [];
+  const injB = teamB.injuries || [];
+  const outListA = injA.filter((i) => i.status === 'Out' || i.status === 'Suspended');
+  const outListB = injB.filter((i) => i.status === 'Out' || i.status === 'Suspended');
+  const dtdListA = injA.filter((i) => i.status !== 'Out' && i.status !== 'Suspended');
+  const dtdListB = injB.filter((i) => i.status !== 'Out' && i.status !== 'Suspended');
+
+  // Injury Impact Edge: each confirmed Out/Suspended player shifts team strength by ~3.0 pts, DTD ~1.0 pt
+  const injuryEdgeA = clamp(
+    (outListB.length - outListA.length) * 3.0 + (dtdListB.length - dtdListA.length) * 1.0,
+    -14,
+    14
+  );
+
+  let pillar4EdgeA = injuryEdgeA;
   if (teamA.hasStandIn) pillar4EdgeA -= 12;
   if (teamB.hasStandIn) pillar4EdgeA += 12;
   if (ctx.isHighStakes) {
-    // Higher-ranked veteran rosters execute cleaner in elimination/playoffs
     pillar4EdgeA += clamp((teamB.ranking - teamA.ranking) * 0.25, -5, 5);
   }
 
-  // Pillar 5: Narratives, Environment & "Curses"
+  // Pillar 5: Narratives, Home/Away Environment & "Curses"
   const envRateA = isLan ? teamA.lanWinRate : teamA.onlineWinRate;
   const envRateB = isLan ? teamB.lanWinRate : teamB.onlineWinRate;
   const pillar5EdgeA = (envRateA - envRateB) * 0.35;
 
   // Composite TRUE SERIES WIN PROBABILITY (computed purely from Pillars 1–5, zero odds leakage)
   const structuralDiffA =
-    pillar1EdgeA * 0.52 +
-    pillar2EdgeA * 0.34 +
+    pillar1EdgeA * 0.5 +
+    pillar2EdgeA * 0.32 +
     pillar3EdgeA * 0.14 +
-    pillar4EdgeA * 0.1 +
-    pillar5EdgeA * 0.15;
+    pillar4EdgeA * 0.22 +
+    pillar5EdgeA * 0.14;
 
   const trueProbA = clamp((50 + structuralDiffA) / 100, 0.1, 0.92);
   const trueProbB = 1 - trueProbA;
@@ -184,11 +197,19 @@ export function runDeterministicAnalysis(match: EsportsMatch): MatchAnalysis {
   const fairOddsDecimal = Number((1 / recTrueProb).toFixed(2));
   const marketOddsDecimal = recTeam.oddsDecimal;
 
-  // Trap Favorite Detection (ONLY trigger on real trap signals: stand-in, suspicious swing, dead-rubber B-tier juiced fav, or severe -10% mispricing)
+  const recOutList = recTeam.name === teamA.name ? outListA : outListB;
+  const oppOutList = recTeam.name === teamA.name ? outListB : outListA;
+  const recHasInjuryCrisis =
+    (game === 'NBA' || game === 'Football') &&
+    recOutList.length >= 3 &&
+    recOutList.length >= oppOutList.length + 2;
+
+  // Trap Favorite Detection (stand-in, suspicious swing, major injury crisis on juiced fav, dead-rubber B-tier juiced fav, or severe -10% mispricing)
   const isTrapFavorite =
-    marketOddsDecimal <= 1.28 &&
+    marketOddsDecimal <= 1.32 &&
     (ctx.hasStandIn ||
       ctx.hasSuspiciousSwing ||
+      recHasInjuryCrisis ||
       (ctx.isDeadRubberRisk && match.tier === 'B-Tier' && recEdgePct < -3.5) ||
       recEdgePct <= -10.0);
 
@@ -203,6 +224,8 @@ export function runDeterministicAnalysis(match: EsportsMatch): MatchAnalysis {
   else if (format === 'Bo5') riskPoints += 4;
   else if (game === 'Football') riskPoints += 16;
   if (ctx.hasStandIn) riskPoints += 24;
+  if (recHasInjuryCrisis) riskPoints += 20;
+  else if (recOutList.length >= 2) riskPoints += 8;
   if (ctx.isDeadRubberRisk) riskPoints += 12;
   if (ctx.hasSuspiciousSwing) riskPoints += 25;
   if (match.tier === 'B-Tier') riskPoints += 10;
@@ -301,6 +324,14 @@ export function runDeterministicAnalysis(match: EsportsMatch): MatchAnalysis {
 
   // Key Risk / Invalidation Factors
   const invalidationFactors: string[] = [];
+  if ((game === 'NBA' || game === 'Football') && recOutList.length > 0) {
+    invalidationFactors.push(
+      `Injury Report Alert (${recTeam.tag}): ${recOutList.length} player(s) confirmed OUT/Suspended (${recOutList
+        .slice(0, 3)
+        .map((x) => x.player)
+        .join(', ')}) — verify final starting lineup before tip-off/kick-off.`
+    );
+  }
   if (isBo1) {
     invalidationFactors.push(
       `Bo1 Format Penalty: One lost pistol/early skirmish or surprise pocket pick can invalidate superior macro instantly.`
@@ -443,14 +474,68 @@ export function runDeterministicAnalysis(match: EsportsMatch): MatchAnalysis {
         ],
       },
       stakesAndContext: {
-        title: '4. Stakes, Motivation & Physical/Mental Context',
-        score: s4,
-        lean: ctx.hasStandIn ? 'Caution (Stand-in)' : ctx.isHighStakes ? favTeam.name : 'Watch Motivation',
-        summary: ctx.isHighStakes
-          ? `High-stakes ${match.stage} (${match.tournament}) ensures peak preparation and zero strat-hiding.`
-          : `Lower-stakes ${match.stage} (${match.tournament}) — monitor for dead-rubber motivation or strat experimentation.`,
+        title: '4. Injuries, Stakes, Motivation & Physical Context',
+        score: clamp(
+          Math.round(
+            (ctx.hasStandIn || recHasInjuryCrisis ? 38 : ctx.isDeadRubberRisk ? 48 : ctx.isHighStakes ? 82 : 66) +
+              Math.abs(injuryEdgeA) * 1.1
+          ),
+          25,
+          94
+        ),
+        lean: ctx.hasStandIn
+          ? 'Caution (Stand-in)'
+          : outListA.length !== outListB.length
+            ? outListA.length < outListB.length
+              ? `${teamA.name} (Healthier)`
+              : `${teamB.name} (Healthier)`
+            : ctx.isHighStakes
+              ? favTeam.name
+              : 'Balanced',
+        summary:
+          game === 'NBA' || game === 'Football'
+            ? `Live Injury Scan: ${teamA.tag} (${outListA.length} Out, ${dtdListA.length} DTD) vs ${teamB.tag} (${outListB.length} Out, ${dtdListB.length} DTD). ${
+                outListA.length === outListB.length
+                  ? 'Comparable squad availability.'
+                  : outListA.length < outListB.length
+                    ? `${teamA.name} holds a measurable health advantage.`
+                    : `${teamB.name} holds a measurable health advantage.`
+              }`
+            : ctx.isHighStakes
+              ? `High-stakes ${match.stage} (${match.tournament}) ensures peak preparation and zero strat-hiding.`
+              : `Lower-stakes ${match.stage} (${match.tournament}) — monitor for dead-rubber motivation or strat experimentation.`,
         bullets: [
-          `Stand-In / Roster Check: ${ctx.hasStandIn ? 'RED FLAG — Active stand-in detected!' : 'Full core roster projected.'}`,
+          ...(game === 'NBA' || game === 'Football'
+            ? [
+                `${teamA.tag} Absences: ${
+                  injA.length > 0
+                    ? injA
+                        .slice(0, 3)
+                        .map((x) => `${x.player} [${x.status}]`)
+                        .join(', ')
+                    : 'No major injuries reported'
+                }`,
+                `${teamB.tag} Absences: ${
+                  injB.length > 0
+                    ? injB
+                        .slice(0, 3)
+                        .map((x) => `${x.player} [${x.status}]`)
+                        .join(', ')
+                    : 'No major injuries reported'
+                }`,
+              ]
+            : [
+                `Stand-In / Roster Check: ${ctx.hasStandIn ? 'RED FLAG — Active stand-in detected!' : 'Full core roster projected.'}`,
+              ]),
+          ...(teamA.seasonRecord || teamB.seasonRecord
+            ? [
+                `Season / Split Records: ${teamA.tag} (${teamA.seasonRecord || 'N/A'}${
+                  teamA.homeRecord ? ` · Home ${teamA.homeRecord}` : ''
+                }) vs ${teamB.tag} (${teamB.seasonRecord || 'N/A'}${
+                  teamB.awayRecord ? ` · Road ${teamB.awayRecord}` : ''
+                })`,
+              ]
+            : []),
           `Integrity Check: ${
             ctx.hasSuspiciousSwing
               ? `WARNING — ${(ctx.maxSwing * 100).toFixed(1)}% sharp 24h odds movement detected on Polymarket.`
@@ -511,7 +596,7 @@ export async function analyzeMatch(match: EsportsMatch): Promise<MatchAnalysis> 
     const systemInstructions = `You are an institutional-grade quantitative Esports & Sports betting analyst.
 STRICT PHILOSOPHY (HARDCODED RULES):
 1. SERIES-FIRST VARIANCE FILTER: Prioritize Bo3/Bo5 Series Winner (or full-match winner for traditional sports). Explicitly penalize Bo1 matches and individual Map 1/Map 2 bets as HIGH VARIANCE / SKIP. Never recommend single-map gambles.
-2. EVALUATE PILLARS 1-5 BEFORE LOOKING AT ODDS: Calculate True Series Win Probability from (1) Strength of Schedule & True Form, (2) Series Depth / Map Pool / Draft Adaptability, (3) Stylistic Matchup & Core-Roster H2H, (4) Stakes, Motivation, Stand-ins & Fatigue, and (5) Narratives, LAN/Online Environment & Curses.
+2. EVALUATE PILLARS 1-5 BEFORE LOOKING AT ODDS: Calculate True Series Win Probability from (1) Strength of Schedule & True Form, (2) Series Depth / Map Pool / Draft Adaptability, (3) Stylistic Matchup & Core-Roster H2H, (4) Live Injury Report (ALWAYS weigh teamA.injuries & teamB.injuries heavily for NBA & Football!), Stakes, Motivation, Stand-ins & Fatigue, and (5) Narratives, Home/Away & LAN/Online Environment.
 3. ODDS AS FINAL SANITY CHECK ONLY (PILLAR 6): Never chase attractive odds ("Fake Value") if an underdog lacks the map/draft depth to win 2+ maps. Reject "Trap Favorites" (1.15-1.28 odds with fatigue, stand-in, or dead-rubber motivation risk) as TRAP MATCH / AVOID -> NO BET (Skip).
 4. ANTI-TILT RULE: Include a crisp 1-2 sentence "whySeriesOverSingleMap" explaining how depth protects the bet even if the team drops Map 1.
 5. VERDICT BADGE MUST BE EXACTLY ONE OF: "STRONG SERIES LOCK", "VALUE SERIES PLAY", "HIGH VARIANCE / SKIP", "TRAP MATCH / AVOID".`;

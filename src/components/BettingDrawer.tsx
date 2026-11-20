@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Flame,
   Gauge,
+  HeartPulse,
   Layers,
   Map,
   Scale,
@@ -425,6 +426,104 @@ export function BettingDrawer({ match, onClose }: BettingDrawerProps) {
                   </div>
                 </div>
               </div>
+
+              {/* LIVE INJURY & AVAILABILITY REPORT (ALWAYS SHOWN FOR FOOTBALL & NBA) */}
+              {(match.game === 'NBA' || match.game === 'Football') && (
+                <div className="rounded-xl border border-rose-500/35 bg-[#111c2d] p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-rose-300">
+                      <HeartPulse className="h-4 w-4 text-rose-400" />
+                      Live Injury &amp; Squad Availability Report ({match.game})
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      Factored into Pillar 4 &amp; True Win Prob
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {[
+                      { team: match.teamA, sideLabel: 'Home / Team A' },
+                      { team: match.teamB, sideLabel: 'Away / Team B' },
+                    ].map(({ team }) => {
+                      const list = team.injuries || [];
+                      const outCount = list.filter(
+                        (i) => i.status === 'Out' || i.status === 'Suspended'
+                      ).length;
+                      return (
+                        <div
+                          key={team.name}
+                          className="rounded-lg border border-[#263750] bg-[#0c1523] p-3 space-y-2"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <div className="text-xs font-bold text-white">{team.name}</div>
+                              {(team.seasonRecord || team.homeRecord || team.awayRecord) && (
+                                <div className="text-[10px] font-mono text-slate-400">
+                                  {team.seasonRecord ? `Rec: ${team.seasonRecord}` : ''}
+                                  {team.homeRecord ? ` · H ${team.homeRecord}` : ''}
+                                  {team.awayRecord ? ` · A ${team.awayRecord}` : ''}
+                                </div>
+                              )}
+                            </div>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border ${
+                                outCount >= 3
+                                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                  : outCount > 0
+                                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                    : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                              }`}
+                            >
+                              {outCount > 0 ? `${outCount} OUT` : list.length > 0 ? `${list.length} DTD` : 'Healthy'}
+                            </span>
+                          </div>
+
+                          {list.length === 0 ? (
+                            <p className="text-[11px] text-emerald-300/80">
+                              No major injuries or suspensions reported in live feeds.
+                            </p>
+                          ) : (
+                            <ul className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                              {list.map((inj, idx) => {
+                                const isOut = inj.status === 'Out' || inj.status === 'Suspended';
+                                return (
+                                  <li
+                                    key={`${inj.player}-${idx}`}
+                                    className="rounded border border-slate-800/90 bg-slate-950/70 p-2 space-y-0.5"
+                                  >
+                                    <div className="flex items-center justify-between gap-1.5">
+                                      <span className="text-[11px] font-semibold text-slate-100 truncate">
+                                        {inj.player}
+                                        {inj.position ? (
+                                          <span className="ml-1 text-[10px] font-mono text-slate-500">
+                                            ({inj.position})
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                      <span
+                                        className={`px-1.5 py-0.2 rounded text-[9px] font-mono font-bold shrink-0 ${
+                                          isOut
+                                            ? 'bg-rose-500/20 text-rose-300'
+                                            : 'bg-amber-500/20 text-amber-300'
+                                        }`}
+                                      >
+                                        {inj.status.toUpperCase()}
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 leading-snug">
+                                      {inj.detail}
+                                    </p>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* 6-Pillar Conviction Chart */}
               <div className="rounded-xl border border-[#263750] bg-[#111c2d] p-4">
