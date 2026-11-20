@@ -7,7 +7,6 @@ import {
   ChevronRight,
   DollarSign,
   Flame,
-  Gauge,
   HeartPulse,
   Layers,
   ShieldCheck,
@@ -15,7 +14,13 @@ import {
   Square,
   TrendingUp,
 } from 'lucide-react';
-import { DailyParlayTier, EsportsMatch, GameTitle, RiskLevel, VerdictBadge } from '@/types/esports';
+import {
+  DailyParlayTier,
+  EsportsMatch,
+  GameTitle,
+  RiskLevel,
+  VerdictBadge,
+} from '@/types/esports';
 
 interface DailyStepsHubProps {
   parlays: DailyParlayTier[];
@@ -35,6 +40,13 @@ function getVerdictStyle(verdict: VerdictBadge): string {
     case 'TRAP MATCH / AVOID':
       return 'bg-rose-500/20 text-rose-300 border-rose-400/50';
   }
+}
+
+function getScoreBadgeClass(score: number): string {
+  if (score >= 9) return 'bg-emerald-500/25 text-emerald-300 border-emerald-400/60';
+  if (score >= 7) return 'bg-sky-500/20 text-sky-300 border-sky-400/50';
+  if (score >= 6) return 'bg-amber-500/20 text-amber-300 border-amber-400/50';
+  return 'bg-rose-500/20 text-rose-300 border-rose-400/50';
 }
 
 function getRiskBadgeClass(risk: RiskLevel): string {
@@ -90,63 +102,23 @@ export function DailyStepsHub({
 }: DailyStepsHubProps) {
   const [stakeUsd, setStakeUsd] = useState<number>(100);
 
-  const safeTier = parlays.find((p) => p.id === 'safe');
-  const mediumTier = parlays.find((p) => p.id === 'medium');
-  const valueTier = parlays.find((p) => p.id === 'value_risk');
-
-  // Allow user to check/uncheck picks from the Top 10 Core (1.35–1.65x) list to build custom multiplier
-  const defaultSelectedIds = useMemo(
-    () => (mediumTier?.legs || []).slice(0, 3).map((l) => l.matchId),
-    [mediumTier]
-  );
-  const [selectedCoreIds, setSelectedCoreIds] = useState<string[]>(defaultSelectedIds);
-
-  // Automatically re-sync selected legs whenever live daily data refreshes to a new day
-  useEffect(() => {
-    const validIds = new Set((mediumTier?.legs || []).map((l) => l.matchId));
-    setSelectedCoreIds((prev) => {
-      const stillValid = prev.filter((id) => validIds.has(id));
-      return stillValid.length > 0 ? stillValid : defaultSelectedIds;
-    });
-  }, [mediumTier, defaultSelectedIds]);
-
-  const activeCoreLegs = useMemo(() => {
-    const legs = mediumTier?.legs || [];
-    const chosen = legs.filter((l) => selectedCoreIds.includes(l.matchId));
-    return chosen.length > 0 ? chosen : legs.slice(0, 3);
-  }, [mediumTier, selectedCoreIds]);
-
-  const coreCombinedOdds = useMemo(
-    () =>
-      activeCoreLegs.length > 0
-        ? Number(activeCoreLegs.reduce((acc, l) => acc * l.oddsDecimal, 1).toFixed(2))
-        : 1.0,
-    [activeCoreLegs]
-  );
-
-  const coreCombinedWinPct = useMemo(
-    () =>
-      activeCoreLegs.length > 0
-        ? Math.round(activeCoreLegs.reduce((acc, l) => acc * (l.modelWinProbPct / 100), 1) * 100)
-        : 0,
-    [activeCoreLegs]
-  );
-
-  const toggleCoreLeg = (matchId: string) => {
-    setSelectedCoreIds((prev) =>
-      prev.includes(matchId) ? prev.filter((id) => id !== matchId) : [...prev, matchId]
-    );
-  };
+  // Order strictly vertically: Tier 1 (Safe) -> Tier 2 (Medium Core) -> Tier 3 (Worth the Risk)
+  const orderedTiers = useMemo(() => {
+    const order: DailyParlayTier['id'][] = ['safe', 'medium', 'value_risk'];
+    return order
+      .map((id) => parlays.find((p) => p.id === id))
+      .filter((t): t is DailyParlayTier => Boolean(t));
+  }, [parlays]);
 
   return (
     <div className="space-y-6">
-      {/* Header + Stake Simulator */}
+      {/* Top Header + Global Stake Simulator */}
       <div className="flex flex-col lg:flex-row gap-4 lg:items-center lg:justify-between">
         <div>
           <div className="flex items-center gap-2.5 flex-wrap">
             <h2 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
               <Layers className="h-5 w-5 text-emerald-400" />
-              Daily 3-Tier Step Builder &amp; Top 10 Core Picks
+              Daily Steps — 3-Tier Vertical Board (Ranked by 1–10 Score)
             </h2>
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-300">
               <Sparkles className="h-3 w-3" />
@@ -156,12 +128,12 @@ export function DailyStepsHub({
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Strictly today&apos;s live/upcoming matches (next 24h) priced with real Polymarket &amp; DraftKings odds. Each match appears at most once with its single best angle — zero conflicting picks.
+            Each tier lists 5–15 high-conviction picks sorted strictly from highest Investability Score (10 → 6). Zero trap matches, zero single-map gambles, 1 best pick per match.
           </p>
         </div>
 
         {/* Interactive Stake Calculator */}
-        <div className="flex items-center gap-2 flex-wrap rounded-xl border border-[#263750] bg-[#111c2d] p-2.5">
+        <div className="flex items-center gap-2 flex-wrap rounded-xl border border-[#263750] bg-[#111c2d] p-2.5 shrink-0">
           <span className="text-xs text-slate-400 flex items-center gap-1 pl-1">
             <DollarSign className="h-3.5 w-3.5 text-[#5ce6b6]" /> Stake:
           </span>
@@ -190,318 +162,315 @@ export function DailyStepsHub({
         </div>
       </div>
 
-      {/* FEATURED: Tier 2 · TOP 10 VETTED CORE PICKS (1.40x – 1.55x) */}
-      {mediumTier && (
-        <div className="rounded-2xl border border-sky-500/40 bg-[#0d1626] p-5 space-y-4">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold border bg-sky-500/20 text-sky-300 border-sky-500/40">
-                  {mediumTier.badge}
-                </span>
-                <span className="text-xs font-mono text-slate-400">
-                  {mediumTier.legs.length} Vetted Picks Today · Target {mediumTier.targetOddsRange}
-                </span>
-              </div>
-              <h3 className="mt-1.5 text-base font-bold text-white flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-sky-400" />
-                {mediumTier.title}
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5">{mediumTier.description}</p>
-            </div>
+      {/* VERTICAL 3-TIER STACK */}
+      <div className="flex flex-col gap-6">
+        {orderedTiers.map((tier) => (
+          <TierVerticalSection
+            key={tier.id}
+            tier={tier}
+            stakeUsd={stakeUsd}
+            onSelectMatch={onSelectMatch}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-            {/* Live Selected Step Calculator */}
-            <div className="rounded-xl border border-sky-500/30 bg-slate-950/80 px-4 py-3 flex items-center gap-5 shrink-0">
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                  Selected ({activeCoreLegs.length} legs)
-                </div>
-                <div className="text-xl font-bold font-mono text-sky-400">
-                  {coreCombinedOdds.toFixed(2)}x
-                </div>
-                <div className="text-[10px] font-mono text-slate-400">
-                  Win Prob: {coreCombinedWinPct}%
-                </div>
-              </div>
-              <div className="border-l border-slate-800 pl-4">
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                  Est. Payout (${stakeUsd})
-                </div>
-                <div className="text-lg font-bold font-mono text-white">
-                  ${(stakeUsd * coreCombinedOdds).toFixed(2)}
-                </div>
-                <div className="text-[11px] font-mono text-emerald-400">
-                  +${(stakeUsd * coreCombinedOdds - stakeUsd).toFixed(2)} profit
-                </div>
-              </div>
-            </div>
+function TierVerticalSection({
+  tier,
+  stakeUsd,
+  onSelectMatch,
+}: {
+  tier: DailyParlayTier;
+  stakeUsd: number;
+  onSelectMatch: (match: EsportsMatch) => void;
+}) {
+  const defaultIds = useMemo(() => tier.legs.slice(0, 3).map((l) => l.matchId), [tier.legs]);
+  const [selectedIds, setSelectedIds] = useState<string[]>(defaultIds);
+
+  useEffect(() => {
+    const valid = new Set(tier.legs.map((l) => l.matchId));
+    setSelectedIds((prev) => {
+      const kept = prev.filter((id) => valid.has(id));
+      return kept.length > 0 ? kept : tier.legs.slice(0, 3).map((l) => l.matchId);
+    });
+  }, [tier.legs]);
+
+  const activeLegs = useMemo(
+    () => tier.legs.filter((l) => selectedIds.includes(l.matchId)),
+    [tier.legs, selectedIds]
+  );
+
+  const combinedOdds = useMemo(
+    () =>
+      activeLegs.length > 0
+        ? Number(activeLegs.reduce((acc, l) => acc * l.oddsDecimal, 1).toFixed(2))
+        : 1.0,
+    [activeLegs]
+  );
+
+  const combinedWinPct = useMemo(
+    () =>
+      activeLegs.length > 0
+        ? Math.round(activeLegs.reduce((acc, l) => acc * (l.trueWinProbPct / 100), 1) * 100)
+        : 0,
+    [activeLegs]
+  );
+
+  const payout = Number((stakeUsd * combinedOdds).toFixed(2));
+  const profit = Number((payout - stakeUsd).toFixed(2));
+
+  const toggleLeg = (matchId: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(matchId) ? prev.filter((id) => id !== matchId) : [...prev, matchId]
+    );
+  };
+
+  const theme =
+    tier.id === 'safe'
+      ? {
+          container: 'border-emerald-500/40 bg-[#0b191c]',
+          badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+          accent: 'text-emerald-400',
+          checkedCard: 'border-emerald-400/60 bg-[#10292d]',
+          checkbox: 'text-emerald-400',
+          calcBorder: 'border-emerald-500/30',
+          icon: <ShieldCheck className="h-5 w-5 text-emerald-400" />,
+        }
+      : tier.id === 'medium'
+        ? {
+            container: 'border-sky-500/40 bg-[#0c1525]',
+            badge: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
+            accent: 'text-sky-400',
+            checkedCard: 'border-sky-400/60 bg-[#11223a]',
+            checkbox: 'text-sky-400',
+            calcBorder: 'border-sky-500/30',
+            icon: <TrendingUp className="h-5 w-5 text-sky-400" />,
+          }
+        : {
+            container: 'border-amber-500/40 bg-[#1a140f]',
+            badge: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+            accent: 'text-amber-400',
+            checkedCard: 'border-amber-400/60 bg-[#281e14]',
+            checkbox: 'text-amber-400',
+            calcBorder: 'border-amber-500/30',
+            icon: <Flame className="h-5 w-5 text-amber-400" />,
+          };
+
+  return (
+    <section className={`rounded-2xl border ${theme.container} p-5 space-y-4`}>
+      {/* Section Header + Live Step Calculator */}
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-800/80 pb-4">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${theme.badge}`}>
+              {tier.badge}
+            </span>
+            <span className="text-xs font-mono text-slate-300 bg-slate-900/90 border border-slate-800 px-2 py-0.5 rounded">
+              {tier.legs.length} Sure Picks Today (Target 5–15)
+            </span>
+            <span className="text-xs font-mono text-slate-400">{tier.targetOddsRange}</span>
+            <span className="text-[11px] font-mono text-slate-500">· Size: {tier.recommendedUnits}</span>
           </div>
 
-          {/* 10 Vetted Picks Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-            {mediumTier.legs.map((leg, idx) => {
-              const checked = selectedCoreIds.includes(leg.matchId);
-              return (
-                <div
-                  key={`core-${leg.matchId}`}
-                  className={`rounded-xl border p-3 transition-all ${
-                    checked
-                      ? 'border-sky-400/60 bg-[#11223a]'
-                      : 'border-slate-800/90 bg-slate-950/70 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-start gap-2.5">
-                    {/* Checkbox to include/exclude in custom step */}
-                    <button
-                      type="button"
-                      onClick={() => toggleCoreLeg(leg.matchId)}
-                      className="mt-0.5 text-sky-400 hover:text-sky-300 cursor-pointer shrink-0"
-                      title="Include/exclude in Step Multiplier"
-                    >
-                      {checked ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4 text-slate-600" />}
-                    </button>
-
-                    <div className="flex-1 min-w-0 space-y-1.5">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[10px] font-mono text-slate-400">#{idx + 1}</span>
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${getGamePill(leg.game)}`}>
-                            {leg.game}
-                          </span>
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${getVerdictStyle(leg.verdictBadge)}`}>
-                            {leg.verdictBadge}
-                          </span>
-                          <span className="text-[10px] font-mono text-sky-300">{leg.marketCategory}</span>
-                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-emerald-300">
-                            {leg.oddsSource}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-1.5">
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${getRiskBadgeClass(
-                              leg.riskLevel
-                            )}`}
-                          >
-                            {leg.investabilityScore}/10
-                          </span>
-                          <span className="font-mono text-xs font-bold text-[#eac382]">
-                            {leg.oddsDecimal.toFixed(2)}x
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onSelectMatch(leg.match)}
-                          className="text-left text-xs font-bold text-white hover:text-sky-300 truncate cursor-pointer"
-                        >
-                          Pick: {leg.selection}{' '}
-                          <span className="font-normal text-slate-400">({leg.matchName})</span>
-                        </button>
-                        <span className="text-[11px] font-mono text-emerald-400 shrink-0">
-                          True {leg.trueWinProbPct}% vs Mkt {leg.marketImpliedProbPct}%
-                        </span>
-                      </div>
-
-                      {leg.injurySummary && (
-                        <div className="flex items-center gap-1 text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/25 rounded px-2 py-0.5 truncate">
-                          <HeartPulse className="h-3 w-3 shrink-0" />
-                          <span className="truncate">{leg.injurySummary}</span>
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between gap-2 text-[11px]">
-                        <span className="inline-flex items-center gap-1 text-amber-300/90 truncate">
-                          <AlertTriangle className="h-3 w-3 shrink-0" />
-                          {leg.riskNote}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => onSelectMatch(leg.match)}
-                          className="inline-flex items-center gap-0.5 text-[10px] text-sky-400 hover:underline shrink-0 cursor-pointer"
-                        >
-                          {formatLocalTime(leg.startTimeIso)}
-                          <ChevronRight className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="flex items-center gap-2">
+            {theme.icon}
+            <h3 className="text-base font-bold text-white">{tier.title}</h3>
           </div>
+          <p className="text-xs text-slate-400 max-w-3xl">{tier.description}</p>
         </div>
-      )}
 
-      {/* Tier 1 (Safe) & Tier 3 (Worth the Risk) Side-by-Side */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {[safeTier, valueTier].filter(Boolean).map((tier) => {
-          if (!tier) return null;
-          const isSafe = tier.id === 'safe';
-          const payout = Number((stakeUsd * tier.combinedOdds).toFixed(2));
-          const profit = Number((payout - stakeUsd).toFixed(2));
-          const formula =
-            tier.legs.length > 0
-              ? `${tier.legs.map((l) => l.oddsDecimal.toFixed(2)).join(' × ')} = ${tier.combinedOdds.toFixed(2)}x`
-              : 'No qualifying legs';
+        {/* Live Selected Multiplier Box + Quick Select Controls */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
+          <div className={`rounded-xl border ${theme.calcBorder} bg-slate-950/85 px-4 py-2.5 flex items-center gap-4`}>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                Selected ({activeLegs.length} legs)
+              </div>
+              <div className={`text-xl font-bold font-mono tabular-nums ${theme.accent}`}>
+                {activeLegs.length > 0 ? `${combinedOdds.toFixed(2)}x` : '—'}
+              </div>
+              <div className="text-[10px] font-mono text-slate-400">
+                Win Prob: {combinedWinPct}%
+              </div>
+            </div>
+            <div className="border-l border-slate-800 pl-4">
+              <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                Payout (${stakeUsd})
+              </div>
+              <div className="text-base font-bold font-mono text-white">
+                {activeLegs.length > 0 ? `$${payout.toLocaleString()}` : '$0'}
+              </div>
+              <div className="text-[11px] font-mono text-emerald-400">
+                {activeLegs.length > 0 ? `+$${profit.toLocaleString()} net` : 'Select legs'}
+              </div>
+            </div>
+          </div>
 
-          return (
-            <div
-              key={tier.id}
-              className={`rounded-2xl border p-5 flex flex-col justify-between space-y-4 ${
-                isSafe ? 'border-emerald-500/40 bg-[#0d1c1e]' : 'border-amber-500/40 bg-[#1c1510]'
-              }`}
-            >
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
-                        isSafe
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                          : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                      }`}
-                    >
-                      {tier.badge}
-                    </span>
-                    <span className="text-[11px] font-mono text-slate-400">{tier.targetOddsRange}</span>
-                  </div>
-                  <div className="flex items-center gap-2 pt-1">
-                    {isSafe ? (
-                      <ShieldCheck className="h-5 w-5 text-emerald-400" />
+          {tier.legs.length > 0 && (
+            <div className="flex sm:flex-col gap-1.5 text-[11px] font-mono">
+              <button
+                type="button"
+                onClick={() => setSelectedIds(tier.legs.slice(0, 3).map((l) => l.matchId))}
+                className="px-2.5 py-1 rounded-md border border-slate-700 bg-slate-900 hover:border-slate-500 text-slate-200 cursor-pointer"
+              >
+                Top 3
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(tier.legs.slice(0, 5).map((l) => l.matchId))}
+                className="px-2.5 py-1 rounded-md border border-slate-700 bg-slate-900 hover:border-slate-500 text-slate-200 cursor-pointer"
+              >
+                Top 5
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedIds([])}
+                className="px-2.5 py-1 rounded-md border border-slate-800 bg-slate-950 hover:text-white text-slate-400 cursor-pointer"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Picks List (Sorted strictly by highest 1–10 Investability Score) */}
+      {tier.legs.length === 0 ? (
+        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-6 text-center text-xs text-slate-400">
+          No high-conviction today-only real-odds matches currently meet the strict certainty filter for this tier.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+          {tier.legs.map((leg, idx) => {
+            const checked = selectedIds.includes(leg.matchId);
+            return (
+              <div
+                key={`${tier.id}-${leg.matchId}`}
+                className={`rounded-xl border p-3.5 transition-all ${
+                  checked
+                    ? theme.checkedCard
+                    : 'border-slate-800/90 bg-slate-950/70 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  {/* Checkbox */}
+                  <button
+                    type="button"
+                    onClick={() => toggleLeg(leg.matchId)}
+                    className={`mt-0.5 cursor-pointer shrink-0 ${theme.checkbox}`}
+                    title="Include/exclude in step ticket"
+                  >
+                    {checked ? (
+                      <CheckSquare className="h-4 w-4" />
                     ) : (
-                      <Flame className="h-5 w-5 text-amber-400" />
+                      <Square className="h-4 w-4 text-slate-600" />
                     )}
-                    <h3 className="text-base font-bold text-white">{tier.title}</h3>
-                  </div>
-                  <p className="text-xs text-slate-400">{tier.description}</p>
-                </div>
+                  </button>
 
-                {/* Multiplier & Payout */}
-                <div className="rounded-xl border border-slate-800/90 bg-slate-950/75 p-3.5 space-y-2.5">
-                  <div className="flex items-baseline justify-between">
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wider text-slate-500">
-                        Combined Multiplier
-                      </div>
-                      <div
-                        className={`text-2xl font-bold font-mono tabular-nums ${
-                          isSafe ? 'text-emerald-400' : 'text-amber-400'
-                        }`}
-                      >
-                        {tier.combinedOdds.toFixed(2)}x
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-[10px] uppercase tracking-wider text-slate-500">
-                        Est. Payout (${stakeUsd})
-                      </div>
-                      <div className="text-lg font-bold font-mono text-white">
-                        ${payout.toLocaleString()}
-                        <span className="ml-1 text-xs font-normal text-emerald-400">
-                          (+${profit.toLocaleString()})
+                  {/* Body */}
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    {/* Row 1: Rank, 1–10 Score, Game, Verdict, Odds */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] font-mono font-bold text-slate-400">
+                          #{idx + 1}
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-mono font-bold border ${getScoreBadgeClass(
+                            leg.investabilityScore
+                          )}`}
+                          title="Investability Score: 10 = Highest Conviction · 1 = Extreme Risk"
+                        >
+                          {leg.investabilityScore}/10
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${getGamePill(
+                            leg.game
+                          )}`}
+                        >
+                          {leg.game}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${getVerdictStyle(
+                            leg.verdictBadge
+                          )}`}
+                        >
+                          {leg.verdictBadge}
                         </span>
                       </div>
-                    </div>
-                  </div>
 
-                  <div className="text-[11px] font-mono text-slate-400 bg-slate-900/90 rounded px-2.5 py-1 border border-slate-800/80 truncate">
-                    {formula}
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2 pt-1 text-center">
-                    <div className="rounded-lg bg-slate-900/70 border border-slate-800/80 p-2">
-                      <div className="text-[10px] text-slate-500">Score (1–10)</div>
-                      <div className={`text-sm font-bold font-mono ${isSafe ? 'text-emerald-400' : 'text-amber-400'}`}>
-                        {tier.investabilityScore}/10
-                      </div>
-                    </div>
-                    <div className="rounded-lg bg-slate-900/70 border border-slate-800/80 p-2">
-                      <div className="text-[10px] text-slate-500">Model Win %</div>
-                      <div className="text-sm font-bold font-mono text-white">{tier.combinedWinProbPct}%</div>
-                    </div>
-                    <div className="rounded-lg bg-slate-900/70 border border-slate-800/80 p-2">
-                      <div className="text-[10px] text-slate-500">Max Safe Bet</div>
-                      <div className="text-sm font-bold font-mono text-[#eac382]">
-                        ${tier.maxSafeStakeUsd.toLocaleString()}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Legs */}
-                <div className="space-y-2">
-                  {tier.legs.map((leg, idx) => (
-                    <button
-                      key={`${tier.id}-${leg.matchId}`}
-                      type="button"
-                      onClick={() => onSelectMatch(leg.match)}
-                      className="w-full text-left group rounded-xl border border-slate-800/90 bg-slate-950/70 hover:border-[#4bb5f7]/60 p-3 space-y-1 transition-colors cursor-pointer"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[10px] font-mono text-slate-400">#{idx + 1}</span>
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${getGamePill(leg.game)}`}>
-                            {leg.game}
-                          </span>
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${getVerdictStyle(leg.verdictBadge)}`}>
-                            {leg.verdictBadge}
-                          </span>
-                          <span className="text-[10px] font-mono text-[#90d5ff]">{leg.marketCategory}</span>
-                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-emerald-300">
-                            {leg.oddsSource}
-                          </span>
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${getRiskBadgeClass(leg.riskLevel)}`}>
-                            {leg.investabilityScore}/10
-                          </span>
-                        </div>
-                        <span className={`font-mono text-xs font-bold ${isSafe ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${getRiskBadgeClass(
+                            leg.riskLevel
+                          )}`}
+                        >
+                          {leg.riskLevel} Risk
+                        </span>
+                        <span className={`font-mono text-sm font-bold ${theme.accent}`}>
                           {leg.oddsDecimal.toFixed(2)}x
                         </span>
                       </div>
+                    </div>
 
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-white group-hover:text-[#90d5ff] truncate">
-                          Pick: {leg.selection} <span className="font-normal text-slate-400">({leg.matchName})</span>
+                    {/* Row 2: Pick + Match + True vs Mkt Prob */}
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onSelectMatch(leg.match)}
+                        className="text-left text-xs font-bold text-white hover:text-[#90d5ff] truncate cursor-pointer"
+                      >
+                        Pick: {leg.selection}{' '}
+                        <span className="font-normal text-slate-400">({leg.matchName})</span>
+                      </button>
+                      <span className="text-[11px] font-mono text-emerald-400 shrink-0">
+                        True {leg.trueWinProbPct}% vs Mkt {leg.marketImpliedProbPct}%
+                      </span>
+                    </div>
+
+                    {/* Row 3: Market Type + Real Odds Source + Start Time */}
+                    <div className="flex items-center justify-between gap-2 text-[10px] font-mono">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[#90d5ff]">{leg.marketCategory}</span>
+                        <span className="px-1.5 py-0.2 rounded bg-slate-900 border border-slate-700 text-emerald-300">
+                          {leg.oddsSource}
                         </span>
-                        <span className="text-[11px] font-mono text-emerald-400 shrink-0">
-                          True {leg.trueWinProbPct}% vs Mkt {leg.marketImpliedProbPct}%
+                        <span className="text-slate-500 truncate max-w-[160px]">
+                          {leg.tournament}
                         </span>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => onSelectMatch(leg.match)}
+                        className="inline-flex items-center gap-0.5 text-sky-400 hover:underline shrink-0 cursor-pointer"
+                      >
+                        {formatLocalTime(leg.startTimeIso)}
+                        <ChevronRight className="h-3 w-3" />
+                      </button>
+                    </div>
 
-                      {leg.injurySummary && (
-                        <div className="flex items-center gap-1 text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/25 rounded px-2 py-0.5 truncate">
-                          <HeartPulse className="h-3 w-3 shrink-0" />
-                          <span className="truncate">{leg.injurySummary}</span>
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between text-[11px] text-slate-400">
-                        <span className="truncate pr-2 text-amber-300/80">{leg.riskNote}</span>
-                        <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-500 shrink-0">
-                          {formatLocalTime(leg.startTimeIso)}
-                          <ChevronRight className="h-3 w-3" />
-                        </span>
+                    {/* Live Injury Strip (NBA & Football) */}
+                    {leg.injurySummary && (
+                      <div className="flex items-center gap-1.5 text-[10px] text-rose-200 bg-rose-500/10 border border-rose-500/25 rounded px-2 py-1 truncate">
+                        <HeartPulse className="h-3 w-3 text-rose-400 shrink-0" />
+                        <span className="truncate">{leg.injurySummary}</span>
                       </div>
-                    </button>
-                  ))}
+                    )}
+
+                    {/* Risk Note */}
+                    <div className="flex items-center gap-1 text-[10px] text-amber-300/85 truncate">
+                      <AlertTriangle className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{leg.riskNote}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-                <span className="flex items-center gap-1">
-                  <Gauge className="h-3.5 w-3.5" /> Size: {tier.recommendedUnits}
-                </span>
-                <span className="font-mono text-slate-200">
-                  EV: {tier.expectedValuePct >= 0 ? `+${tier.expectedValuePct}%` : `${tier.expectedValuePct}%`}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }

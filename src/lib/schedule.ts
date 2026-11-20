@@ -81,7 +81,7 @@ function seededNumber(seedStr: string, min: number, max: number): number {
 function normalizeTeamKey(name: string): string {
   const cleaned = name
     .toLowerCase()
-    .replace(/\b(fc|cf|ac|sc|esports|gaming|team|new york|los angeles|la|golden state|san antonio|minnesota|memphis|milwaukee|portland|detroit|new orleans|washington|toronto|cleveland|houston|indiana|boston|miami|dallas|denver|phoenix|oklahoma city|chicago|atlanta|brooklyn|charlotte|orlando|philadelphia|sacramento|utah)\b/g, '')
+    .replace(/\b(fc|cf|ac|sc|es|as|us|afc|ogc|rc|sv|1\.|esports|gaming|team|new york|los angeles|la|golden state|san antonio|minnesota|memphis|milwaukee|portland|detroit|new orleans|washington|toronto|cleveland|houston|indiana|boston|miami|dallas|denver|phoenix|oklahoma city|chicago|atlanta|brooklyn|charlotte|orlando|philadelphia|sacramento|utah)\b/g, '')
     .replace(/[^a-z0-9]/g, '');
   return cleaned || name.toLowerCase().replace(/[^a-z0-9]/g, '');
 }

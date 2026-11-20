@@ -154,13 +154,13 @@ export function runDeterministicAnalysis(match: EsportsMatch): MatchAnalysis {
 
   // Composite TRUE SERIES WIN PROBABILITY (computed purely from Pillars 1–5, zero odds leakage)
   const structuralDiffA =
-    pillar1EdgeA * 0.5 +
-    pillar2EdgeA * 0.32 +
+    pillar1EdgeA * 0.62 +
+    pillar2EdgeA * 0.34 +
     pillar3EdgeA * 0.14 +
     pillar4EdgeA * 0.22 +
     pillar5EdgeA * 0.14;
 
-  const trueProbA = clamp((50 + structuralDiffA) / 100, 0.1, 0.92);
+  const trueProbA = clamp((50 + structuralDiffA) / 100, 0.07, 0.94);
   const trueProbB = 1 - trueProbA;
 
   // Identify structurally superior team BEFORE looking at odds
@@ -204,14 +204,14 @@ export function runDeterministicAnalysis(match: EsportsMatch): MatchAnalysis {
     recOutList.length >= 3 &&
     recOutList.length >= oppOutList.length + 2;
 
-  // Trap Favorite Detection (stand-in, suspicious swing, major injury crisis on juiced fav, dead-rubber B-tier juiced fav, or severe -10% mispricing)
+  // Trap Favorite Detection (ONLY trigger on genuine structural red flags: stand-in, suspicious swing, major injury crisis, dead-rubber B-tier juiced fav, or extreme -14% mispricing)
   const isTrapFavorite =
     marketOddsDecimal <= 1.32 &&
     (ctx.hasStandIn ||
       ctx.hasSuspiciousSwing ||
       recHasInjuryCrisis ||
-      (ctx.isDeadRubberRisk && match.tier === 'B-Tier' && recEdgePct < -3.5) ||
-      recEdgePct <= -10.0);
+      (ctx.isDeadRubberRisk && match.tier === 'B-Tier' && recEdgePct < -5.5) ||
+      recEdgePct <= -14.0);
 
   // Series-First Variance Penalty (Bo1 or coin-flip with zero structural depth)
   const isBo1 = format === 'Bo1';
