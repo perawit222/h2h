@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Activity,
   CalendarClock,
@@ -10,6 +10,8 @@ import {
   Terminal,
 } from 'lucide-react';
 import { EsportsMatch, RadarResponse, ScheduleResponse } from '@/types/esports';
+import { fetchPolymarketEsportsRadar } from '@/lib/polymarket';
+import { fetchDailySchedule } from '@/lib/schedule';
 import { AnomalyRadar } from './AnomalyRadar';
 import { ScheduleHub } from './ScheduleHub';
 import { DailyStepsHub } from './DailyStepsHub';
@@ -20,32 +22,59 @@ interface TerminalShellProps {
   initialSchedule: ScheduleResponse;
 }
 
+function formatSyncTime(iso?: string): string {
+  if (!iso) return '';
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(iso));
+  } catch {
+    return '';
+  }
+}
+
 export function TerminalShell({ initialRadar, initialSchedule }: TerminalShellProps) {
   const [activeTab, setActiveTab] = useState<'radar' | 'schedule' | 'steps'>('radar');
   const [radarData, setRadarData] = useState<RadarResponse>(initialRadar);
   const [scheduleData, setScheduleData] = useState<ScheduleResponse>(initialSchedule);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [liveSynced, setLiveSynced] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<EsportsMatch | null>(null);
 
-  const handleRefresh = useCallback(async () => {
+  const syncLiveData = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const [radarRes, schedRes] = await Promise.all([
-        fetch('/api/radar', { cache: 'no-store' }),
-        fetch('/api/schedule', { cache: 'no-store' }),
-      ]);
-      if (radarRes.ok && schedRes.ok) {
-        setRadarData(await radarRes.json());
-        setScheduleData(await schedRes.json());
-      } else {
-        window.location.reload();
+      // 1. Always fetch live directly in-browser from CORS-enabled Polymarket + ESPN DraftKings + OpenDota APIs!
+      // This guarantees GitHub Pages (static host) ALWAYS updates daily to TODAY'S live matches & odds!
+      const freshRadar = await fetchPolymarketEsportsRadar();
+      const freshSchedule = await fetchDailySchedule(freshRadar);
+
+      if (freshRadar.alerts.length > 0) {
+        setRadarData(freshRadar);
       }
-    } catch {
-      window.location.reload();
+      if (freshSchedule.matches.length > 0) {
+        setScheduleData(freshSchedule);
+      }
+      setLiveSynced(true);
+    } catch (err) {
+      console.error('Live sync error:', err);
     } finally {
       setIsRefreshing(false);
     }
   }, []);
+
+  // Auto-sync live immediately on page load (so GitHub Pages never stays stuck on an old build date)
+  // and auto-refresh every 5 minutes while open.
+  useEffect(() => {
+    syncLiveData();
+    const timer = setInterval(() => {
+      syncLiveData();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [syncLiveData]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -119,31 +148,43 @@ export function TerminalShell({ initialRadar, initialSchedule }: TerminalShellPr
             </button>
           </nav>
 
-          {/* Refresh */}
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-800 bg-[#0b111e] hover:border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors disabled:opacity-50 cursor-pointer"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-emerald-400' : ''}`} />
-            <span className="hidden sm:inline">{isRefreshing ? 'Syncing...' : 'Refresh'}</span>
-          </button>
+          {/* Live Sync Status + Refresh */}
+          <div className="flex items-center gap-2">
+            {liveSynced && (
+              <span className="hidden md:inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-mono text-emerald-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live · {formatSyncTime(scheduleData.fetchedAt)}
+              </span>
+            )}
+            <button
+              onClick={syncLiveData}
+              disabled={isRefreshing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-800 bg-[#0b111e] hover:border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-emerald-400' : ''}`}
+              />
+              <span className="hidden sm:inline">{isRefreshing ? 'Syncing Live...' : 'Refresh'}</span>
+            </button>
+          </div>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
         {activeTab === 'radar' ? (
-          <AnomalyRadar data={radarData} isLoading={isRefreshing} />
+          <AnomalyRadar data={radarData} isLoading={isRefreshing && !liveSynced} />
         ) : activeTab === 'schedule' ? (
           <ScheduleHub
             data={scheduleData}
-            isLoading={isRefreshing}
+            isLoading={isRefreshing && !liveSynced}
             onSelectMatch={(match) => setSelectedMatch(match)}
           />
         ) : (
           <DailyStepsHub
             parlays={scheduleData.parlays || []}
+            fetchedAt={scheduleData.fetchedAt}
+            isSyncing={isRefreshing}
             onSelectMatch={(match) => setSelectedMatch(match)}
           />
         )}
@@ -151,7 +192,7 @@ export function TerminalShell({ initialRadar, initialSchedule }: TerminalShellPr
 
       {/* Footer */}
       <footer className="border-t border-slate-900 py-4 text-center text-[11px] font-mono text-slate-600">
-        H2H Esports Edge &amp; Integrity Terminal · Server-cached Polymarket (120s) &amp; Schedule (300s) · For Analytics &amp; Research Only
+        H2H Edge &amp; Integrity Terminal · Auto-Syncs Live Daily Odds from Polymarket, DraftKings (ESPN) &amp; OpenDota · For Analytics &amp; Research Only
       </footer>
 
       {/* Betting Value & Risk Drawer */}

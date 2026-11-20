@@ -2,6 +2,7 @@ import {
   EsportsMatch,
   GameTitle,
   MatchFormat,
+  RadarResponse,
   ScheduleResponse,
   SubMarketSnapshot,
   TeamSnapshot,
@@ -9,6 +10,18 @@ import {
 import { fetchPolymarketEsportsRadar } from './polymarket';
 import { runDeterministicAnalysis } from './analyzer';
 import { buildDailyParlays } from './parlay';
+
+function serverOrBrowserFetchInit(revalidateSeconds: number, extraHeaders?: Record<string, string>): RequestInit & { next?: { revalidate: number } } {
+  const isBrowser = typeof window !== 'undefined';
+  if (isBrowser) {
+    return { signal: AbortSignal.timeout(7000) };
+  }
+  return {
+    next: { revalidate: revalidateSeconds },
+    signal: AbortSignal.timeout(6000),
+    ...(extraHeaders ? { headers: extraHeaders } : {}),
+  };
+}
 
 interface Bo3MatchRaw {
   id: number;
@@ -396,10 +409,10 @@ async function fetchBo3Cs2Matches(): Promise<EsportsMatch[]> {
 
 async function fetchOpenDotaLive(): Promise<EsportsMatch[]> {
   try {
-    const res = await fetch('https://api.opendota.com/api/live', {
-      next: { revalidate: 300 },
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await fetch(
+      'https://api.opendota.com/api/live',
+      serverOrBrowserFetchInit(300)
+    );
     if (!res.ok) return [];
     const games = (await res.json()) as OpenDotaLiveGame[];
     const named = games
@@ -561,9 +574,19 @@ function americanToDecimal(raw?: string): number | null {
 
 async function fetchEspnSportsMatches(): Promise<EsportsMatch[]> {
   const todayCompact = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const yesterdayCompact = new Date(Date.now() - 24 * 3600 * 1000)
+    .toISOString()
+    .slice(0, 10)
+    .replace(/-/g, '');
   const feeds: { url: string; game: GameTitle; league: string; format: MatchFormat }[] = [
     {
       url: `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${todayCompact}`,
+      game: 'NBA',
+      league: 'NBA Regular Season',
+      format: '4Q',
+    },
+    {
+      url: `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${yesterdayCompact}`,
       game: 'NBA',
       league: 'NBA Regular Season',
       format: '4Q',
@@ -603,10 +626,7 @@ async function fetchEspnSportsMatches(): Promise<EsportsMatch[]> {
   const results = await Promise.all(
     feeds.map(async (f) => {
       try {
-        const res = await fetch(f.url, {
-          next: { revalidate: 300 },
-          signal: AbortSignal.timeout(5000),
-        });
+        const res = await fetch(f.url, serverOrBrowserFetchInit(300));
         if (!res.ok) return [] as EsportsMatch[];
         const json = (await res.json()) as { events?: EspnEventRaw[] };
         const events = (json.events || []).filter((e) => e.status?.type?.state !== 'post').slice(0, 8);
@@ -767,15 +787,20 @@ async function fetchEspnSportsMatches(): Promise<EsportsMatch[]> {
   return results.flat();
 }
 
-export async function fetchDailySchedule(): Promise<ScheduleResponse> {
+export async function fetchDailySchedule(
+  preFetchedRadar?: RadarResponse
+): Promise<ScheduleResponse> {
   const fetchedAt = new Date().toISOString();
   const sourcesUsed: string[] = [];
+  const isBrowser = typeof window !== 'undefined';
 
+  // In browser mode (e.g., GitHub Pages), fetch directly from CORS-enabled public APIs
+  // (Polymarket Gamma API, ESPN DraftKings API, OpenDota Live API) for 100% live daily updates!
   const [radar, bo3Matches, openDotaMatches, lolMatches, espnMatches] = await Promise.all([
-    fetchPolymarketEsportsRadar(),
-    fetchBo3Cs2Matches(),
+    preFetchedRadar ? Promise.resolve(preFetchedRadar) : fetchPolymarketEsportsRadar(),
+    isBrowser ? Promise.resolve([] as EsportsMatch[]) : fetchBo3Cs2Matches(),
     fetchOpenDotaLive(),
-    fetchLoLEsportsSchedule(),
+    isBrowser ? Promise.resolve([] as EsportsMatch[]) : fetchLoLEsportsSchedule(),
     fetchEspnSportsMatches(),
   ]);
 

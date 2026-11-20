@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckSquare,
@@ -18,6 +18,8 @@ import { DailyParlayTier, EsportsMatch, GameTitle, RiskLevel, VerdictBadge } fro
 
 interface DailyStepsHubProps {
   parlays: DailyParlayTier[];
+  fetchedAt?: string;
+  isSyncing?: boolean;
   onSelectMatch: (match: EsportsMatch) => void;
 }
 
@@ -79,19 +81,33 @@ function formatLocalTime(iso: string): string {
   }
 }
 
-export function DailyStepsHub({ parlays, onSelectMatch }: DailyStepsHubProps) {
+export function DailyStepsHub({
+  parlays,
+  fetchedAt,
+  isSyncing,
+  onSelectMatch,
+}: DailyStepsHubProps) {
   const [stakeUsd, setStakeUsd] = useState<number>(100);
 
   const safeTier = parlays.find((p) => p.id === 'safe');
   const mediumTier = parlays.find((p) => p.id === 'medium');
   const valueTier = parlays.find((p) => p.id === 'value_risk');
 
-  // Allow user to check/uncheck picks from the Top 10 Core (1.40–1.55x) list to build custom multiplier
+  // Allow user to check/uncheck picks from the Top 10 Core (1.35–1.65x) list to build custom multiplier
   const defaultSelectedIds = useMemo(
     () => (mediumTier?.legs || []).slice(0, 3).map((l) => l.matchId),
     [mediumTier]
   );
   const [selectedCoreIds, setSelectedCoreIds] = useState<string[]>(defaultSelectedIds);
+
+  // Automatically re-sync selected legs whenever live daily data refreshes to a new day
+  useEffect(() => {
+    const validIds = new Set((mediumTier?.legs || []).map((l) => l.matchId));
+    setSelectedCoreIds((prev) => {
+      const stillValid = prev.filter((id) => validIds.has(id));
+      return stillValid.length > 0 ? stillValid : defaultSelectedIds;
+    });
+  }, [mediumTier, defaultSelectedIds]);
 
   const activeCoreLegs = useMemo(() => {
     const legs = mediumTier?.legs || [];
@@ -133,7 +149,9 @@ export function DailyStepsHub({ parlays, onSelectMatch }: DailyStepsHubProps) {
             </h2>
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-300">
               <Sparkles className="h-3 w-3" />
-              Today Only (24h) · 100% Real Odds · 1 Best Pick / Match
+              {isSyncing
+                ? 'Syncing Live Today Slate...'
+                : `Live Today (${fetchedAt ? formatLocalTime(fetchedAt) : 'Auto-Sync'}) · 100% Real Odds`}
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">

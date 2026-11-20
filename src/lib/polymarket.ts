@@ -10,7 +10,8 @@ import {
 } from '@/types/esports';
 
 const GAMMA_BASE =
-  process.env.POLYMARKET_GAMMA_URL?.replace(/\/$/, '') || 'https://gamma-api.polymarket.com';
+  (typeof process !== 'undefined' && process.env?.POLYMARKET_GAMMA_URL?.replace(/\/$/, '')) ||
+  'https://gamma-api.polymarket.com';
 
 interface GammaMarketRaw {
   id?: string;
@@ -331,16 +332,22 @@ function scoreEventAnomaly(params: {
 
 async function fetchGammaEvents(url: string): Promise<GammaEventRaw[]> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 7000);
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  const isBrowser = typeof window !== 'undefined';
   try {
-    const res = await fetch(url, {
-      next: { revalidate: 120 },
-      signal: controller.signal,
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'H2H-Esports-Terminal/1.0',
-      },
-    });
+    const res = await fetch(
+      url,
+      isBrowser
+        ? { signal: controller.signal }
+        : {
+            next: { revalidate: 120 },
+            signal: controller.signal,
+            headers: {
+              Accept: 'application/json',
+              'User-Agent': 'H2H-Esports-Terminal/1.0',
+            },
+          }
+    );
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data) ? data : [];
